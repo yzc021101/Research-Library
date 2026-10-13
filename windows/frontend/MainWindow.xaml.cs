@@ -35,6 +35,7 @@ public sealed partial class MainWindow : Window {
   UpdatePaneStatus();
   if(Environment.GetCommandLineArgs().Contains("--background")&&tray?.Available==true&&ui["onboarding_done"]?.GetValue<bool>()==true)AppWindow.Hide();
   if(ui["onboarding_done"]?.GetValue<bool>()!=true)await Onboarding();
+  _=InitializeUpdates();
  }
  async Task Guard(Func<Task> action){if(busy)return;busy=true;try{await action();}catch(Exception ex){Notify("操作未完成",ex.Message,InfoBarSeverity.Error);}finally{busy=false;if(PageTitle.Text!=PageName(page))await Render();}}
  void Notify(string title,string message="",InfoBarSeverity severity=InfoBarSeverity.Informational){Notice.Title=title;Notice.Message=message;Notice.Severity=severity;Notice.IsOpen=true;}
@@ -46,7 +47,7 @@ public sealed partial class MainWindow : Window {
  Grid Row(FrameworkElement description,FrameworkElement action){var r=new Grid();r.Children.Add(description);r.Children.Add(action);AdaptiveLayout.Row(r,description,action);return r;}
  static void Identify(DependencyObject control,string id,string name){Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(control,id);Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(control,name);}
  public void ShowMain(){AppWindow.Show();if(AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter p&&p.State==Microsoft.UI.Windowing.OverlappedPresenterState.Minimized)p.Restore();Activate();}
- async Task Quit(){if(closing)return;closing=true;timer.Stop();tray?.Dispose();try{await engine.CloseOwned();}finally{Close();}}
+ async Task Quit(){if(closing)return;closing=true;timer.Stop();updateTimer.Stop();tray?.Dispose();try{await engine.CloseOwned();}finally{Close();}}
  async Task TrayCommand(string action){
   if(action=="quit"){await Quit();return;}
   if(action is "open" or "mcp" or "settings"){ShowMain();if(action!="open")await Guard(()=>Go(action));return;}
@@ -66,7 +67,7 @@ public sealed partial class MainWindow : Window {
  Button Button(string title,Func<Task> action,bool accent=false){var b=new Button{Content=title,HorizontalAlignment=HorizontalAlignment.Right};if(accent)b.Style=(Style)Application.Current.Resources["AccentButtonStyle"];b.Click+=async(_,_)=>await Guard(action);return b;}
  void Heading(string title,string? detail=null){Body.Children.Add(Text(title,20));if(detail!=null)Body.Children.Add(Text(detail,14,true));}
  void Note(string text)=>Body.Children.Add(Text(text,14,true));
- async Task Refresh(bool redraw){if(refreshing)return;string previous=status["sources"]?.ToJsonString()??"";refreshing=true;try{using var timeout=new CancellationTokenSource(2500);status=await engine.Request("/status",cancellationToken:timeout.Token);settings=await engine.Request("/settings",cancellationToken:timeout.Token);ServiceLabel.Text=status["busy"]?.GetValue<bool>()==true?"正在同步资料…":"服务运行中";CountLabel.Text=$"{S(status,"active_documents","0")} 份文档 · 本机存储";ServiceButton.Content="停止服务";}catch{status=new();settings=Engine.DiskSettings();ServiceLabel.Text="服务已停止";CountLabel.Text="打开服务后可检索资料";ServiceButton.Content="启动服务";}finally{refreshing=false;}UpdateSyncProgress();tray?.Update(ServiceLabel.Text);if(modelPanel!=null)UpdateModels();if(componentPanel!=null)UpdateComponents();if(redraw||(page=="home"&&previous!=(status["sources"]?.ToJsonString()??"")))await Render();}
+ async Task Refresh(bool redraw){if(refreshing)return;string previous=status["sources"]?.ToJsonString()??"";refreshing=true;try{using var timeout=new CancellationTokenSource(2500);status=await engine.Request("/status",cancellationToken:timeout.Token);settings=await engine.Request("/settings",cancellationToken:timeout.Token);ServiceLabel.Text=status["busy"]?.GetValue<bool>()==true?"正在同步资料…":"服务运行中";CountLabel.Text=$"{S(status,"active_documents","0")} 份文档 · 本机存储";ServiceButton.Content="停止服务";}catch{status=new();settings=Engine.DiskSettings();ServiceLabel.Text="服务已停止";CountLabel.Text="打开服务后可检索资料";ServiceButton.Content="启动服务";}finally{refreshing=false;}UpdateSyncProgress();tray?.Update(ServiceLabel.Text);if(modelPanel!=null)UpdateModels();if(componentPanel!=null)UpdateComponents();if(updatePanel!=null)UpdateSoftware();if(redraw||(page=="home"&&previous!=(status["sources"]?.ToJsonString()??"")))await Render();}
  void UpdateSyncProgress(){
   bool active=status["busy"]?.GetValue<bool>()==true;
   SyncProgressRow.Visibility=active?Visibility.Visible:Visibility.Collapsed;
@@ -79,7 +80,7 @@ public sealed partial class MainWindow : Window {
  async void Navigate(NavigationView sender,NavigationViewSelectionChangedEventArgs args){page=args.IsSettingsSelected?"settings":(args.SelectedItemContainer?.Tag?.ToString()??"home");if(loaded&&!busy)await Guard(Render);}
  async Task Go(string target){if(target=="settings")Navigation.SelectedItem=Navigation.SettingsItem;else Navigation.SelectedItem=Navigation.MenuItems.OfType<NavigationViewItem>().First(x=>x.Tag?.ToString()==target);page=target;await Render();}
  static string PageName(string value)=>value switch{"sources"=>"资料来源","search"=>"检索资料","mcp"=>"MCP 接入","settings"=>"设置",_=>"概览"};
- async Task Render(){if(closing)return;modelPanel=null;componentPanel=null;Body.Children.Clear();Scroller.ChangeView(null,0,null);PageTitle.Text=PageName(page);
+ async Task Render(){if(closing)return;modelPanel=null;componentPanel=null;updatePanel=null;Body.Children.Clear();Scroller.ChangeView(null,0,null);PageTitle.Text=PageName(page);
   switch(page){case "sources":Sources();break;case "search":Search();break;case "mcp":Mcp();break;case "settings":Settings();break;default:await Home();break;}}
  async void SyncClick(object sender,RoutedEventArgs e)=>await Guard(async()=>{await engine.Request("/sync",new{});Notify("已开始同步","完成后可在概览查看文档。",InfoBarSeverity.Success);await Refresh(true);});
  async void ServiceClick(object sender,RoutedEventArgs e)=>await Guard(async()=>{if(await engine.Running())await engine.Stop();else await engine.Start();await Refresh(true);});
@@ -188,6 +189,7 @@ public sealed partial class MainWindow : Window {
  }
  Task Copy(string value){var content=new DataPackage();content.SetText(value);Clipboard.SetContent(content);Clipboard.Flush();Notify("已复制",severity:InfoBarSeverity.Success);return Task.CompletedTask;}
  void Settings(){
+  SoftwareSettings();
   Heading("通用");
   var closeBehavior=new ComboBox{ItemsSource=new[]{"最小化到托盘","直接退出"},SelectedIndex=settings["keep_in_menu_bar"]?.GetValue<bool>()==true?0:1,Width=180};
   Identify(closeBehavior,"CloseBehavior","关闭窗口时");bool updatingCloseBehavior=false;

@@ -16,7 +16,7 @@ cp "$LAB_DIR/assets/MenuBarTemplate.png" "$APP_DIR/Contents/Resources/MenuBarTem
 swiftc -swift-version 5 -parse-as-library -O \
   -module-cache-path "$LAB_DIR/cache/swift" \
   -target arm64-apple-macosx14.0 \
-  "$LAB_DIR/native/ResearchLibrary.swift" "$LAB_DIR/native/MCPConfiguration.swift" "$LAB_DIR/native/MCPConnectionView.swift" "$LAB_DIR/native/MCPClientGuide.swift" "$LAB_DIR/native/OnboardingView.swift" "$LAB_DIR/native/ComponentSettings.swift" "$LAB_DIR/native/StorageSettings.swift" "$LAB_DIR/native/TableContentView.swift" \
+  "$LAB_DIR/native/ResearchLibrary.swift" "$LAB_DIR/native/MCPConfiguration.swift" "$LAB_DIR/native/MCPConnectionView.swift" "$LAB_DIR/native/MCPClientGuide.swift" "$LAB_DIR/native/OnboardingView.swift" "$LAB_DIR/native/ComponentSettings.swift" "$LAB_DIR/native/StorageSettings.swift" "$LAB_DIR/native/UpdateSettings.swift" "$LAB_DIR/native/TableContentView.swift" \
   -o "$APP_DIR/Contents/MacOS/research_library" \
   -framework SwiftUI -framework AppKit -framework ServiceManagement
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
@@ -28,8 +28,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>投研纵览</string>
 <key>CFBundleExecutable</key><string>research_library</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.6.3</string>
-<key>CFBundleVersion</key><string>27</string>
+<key>CFBundleShortVersionString</key><string>0.6.4</string>
+<key>CFBundleVersion</key><string>28</string>
 <key>CFBundleIconFile</key><string>AppIcon.icns</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><false/>

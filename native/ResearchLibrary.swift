@@ -11,11 +11,13 @@ struct Preferences: Codable, Equatable {
     var startServiceOnLaunch = true
     var keepInMenuBar = true
     var appManaged = true
+    var automaticUpdates = false
     var keepSnapshots = false
     var cacheRetentionDays = 30
     enum CodingKeys: String, CodingKey {
         case sourceFolders = "source_folders", topK = "top_k", searchMode = "search_mode"
         case autoScan = "auto_scan", scanInterval = "scan_interval"
+        case automaticUpdates = "automatic_updates"
         case keepSnapshots = "keep_snapshots", cacheRetentionDays = "cache_retention_days"
         case startServiceOnLaunch = "start_service_on_launch", keepInMenuBar = "keep_in_menu_bar", appManaged = "app_managed"
     }
@@ -30,6 +32,7 @@ struct Preferences: Codable, Equatable {
         startServiceOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .startServiceOnLaunch) ?? true
         keepInMenuBar = try c.decodeIfPresent(Bool.self, forKey: .keepInMenuBar) ?? true
         appManaged = try c.decodeIfPresent(Bool.self, forKey: .appManaged) ?? true
+        automaticUpdates = try c.decodeIfPresent(Bool.self, forKey: .automaticUpdates) ?? false
         keepSnapshots = try c.decodeIfPresent(Bool.self, forKey: .keepSnapshots) ?? false
         cacheRetentionDays = try c.decodeIfPresent(Int.self, forKey: .cacheRetentionDays) ?? 30
     }
@@ -75,6 +78,7 @@ struct ModelOption: Identifiable, Decodable {
 
 @MainActor final class LibraryModel: ObservableObject {
     let root: URL
+    let updater: AppUpdater
     @Published var preferences = Preferences()
     @Published var selected = "overview"
     @Published var settingsPane = "general"
@@ -115,6 +119,7 @@ struct ModelOption: Identifiable, Decodable {
 
     init(root: URL) {
         self.root = root
+        self.updater = AppUpdater(root: root)
         preferences.sourceFolders = [root.appendingPathComponent("inbox").path]
         if let data = try? Data(contentsOf: settingsURL), let p = try? JSONDecoder().decode(Preferences.self, from: data) { preferences = p }
         preferences.appManaged = true
@@ -727,11 +732,12 @@ struct SettingsView: View {
                 Section {
                     Toggle("关闭窗口后保留在菜单栏", isOn: $m.preferences.keepInMenuBar)
                 } header: { Text("后台运行") } footer: { Text("在菜单栏中选择“停止服务”可释放模型内存；选择“退出并停止服务”可完全退出。") }
+                UpdateSettings(m: m, updater: m.updater)
             }
             if let error = m.message { Section { Label(error, systemImage: "exclamationmark.triangle").font(.callout).textSelection(.enabled) } }
         }
         .formStyle(.grouped)
-        .frame(width: 560, height: m.settingsPane == "mcp" ? 650 : (["models", "data"].contains(m.settingsPane) ? 650 : 420))
+        .frame(width: 560, height: m.settingsPane == "mcp" ? 650 : (["models", "data"].contains(m.settingsPane) ? 650 : 620))
         .alert("切换向量模型？", isPresented: Binding(get: { pendingModel != nil }, set: { if !$0 { pendingModel = nil } })) {
             if let option = pendingModel {
                 Button(option.downloaded ? "重建索引并切换" : "下载并切换") { pendingModel = nil; Task { await m.switchModel(option.id) } }
@@ -824,7 +830,7 @@ struct SettingsView: View {
         // signed, build-time location without writing user data into /Applications.
         let dataHome = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/research_library")
         let override = ProcessInfo.processInfo.environment["RESEARCH_LIBRARY_ROOT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
-        let root = override ?? (AppRuntime.packaged ? dataHome : (FileManager.default.fileExists(atPath: sibling.appendingPathComponent("src/backend.py").path) ? sibling : (configured ?? sibling)))
+        let root = override ?? (AppRuntime.packaged ? AppRuntime.libraryRoot(defaultRoot: dataHome) : (FileManager.default.fileExists(atPath: sibling.appendingPathComponent("src/backend.py").path) ? sibling : (configured ?? sibling)))
         do { try AppRuntime.prepare(root: root) } catch { NSApp.terminate(nil); return }
         guard FileManager.default.isWritableFile(atPath: root.appendingPathComponent("data").path) else {
             let alert = NSAlert()

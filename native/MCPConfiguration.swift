@@ -3,6 +3,14 @@ import Foundation
 enum AppRuntime {
     static var bundled: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/engine/research-library-engine") }
     static var packaged: Bool { Bundle.main.object(forInfoDictionaryKey: "ResearchLibraryDistribution") as? Bool == true || FileManager.default.isExecutableFile(atPath: bundled.path) }
+    static func libraryRoot(defaultRoot: URL) -> URL {
+        let pointer = defaultRoot.appendingPathComponent("data-location.json")
+        if let data = try? Data(contentsOf: pointer), let value = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+           let path = value["root"], path.hasPrefix("/"), FileManager.default.fileExists(atPath: URL(fileURLWithPath: path).appendingPathComponent("data/settings.json").path) {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return defaultRoot
+    }
     static var releaseURL: URL? {
         let text = Bundle.main.object(forInfoDictionaryKey: "ResearchLibraryReleaseURL") as? String ?? "https://github.com/yzc021101/Research-Library/releases"
         guard

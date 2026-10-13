@@ -1,8 +1,8 @@
 # Corresponding source and build provenance
 
-For release v0.6.3, the application source and build scripts are at https://github.com/yzc021101/Research-Library/tree/v0.6.3 . The AGPL license and frontend additional permission are at the repository root. Application binaries are built from this tag; no source modifications were made to PyMuPDF/MuPDF.
+For release v0.6.4, the application source and build scripts are at https://github.com/yzc021101/Research-Library/tree/v0.6.4 . The AGPL license and frontend additional permission are at the repository root. Application binaries are built from this tag; no source modifications were made to PyMuPDF/MuPDF.
 
-Download matching third-party source assets next to the installers at https://github.com/yzc021101/Research-Library/releases/tag/v0.6.3 :
+Third-party components are unchanged from v0.6.3. Download their matching source assets at https://github.com/yzc021101/Research-Library/releases/tag/v0.6.3 :
 
 - `pymupdf-1.28.2.tar.gz`: official PyPI sdist, includes build scripts and license.
 - `mupdf-1.28.2-source.tar.gz`: official complete MuPDF source including bundled libraries; https://mupdf.com/downloads/archive/mupdf-1.28.2-source.tar.gz .

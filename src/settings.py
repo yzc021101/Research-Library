@@ -10,7 +10,7 @@ DEFAULTS = {
     "source_folders": [str(INBOX)], "top_k": 8, "search_mode": "hybrid",
     "auto_scan": True, "scan_interval": 30, "start_service_on_launch": True,
     "keep_in_menu_bar": True, "app_managed": PACKAGED,
-    "keep_snapshots": False, "cache_retention_days": 30,
+    "automatic_updates": False, "keep_snapshots": False, "cache_retention_days": 30,
 }
 
 def load_settings():
@@ -31,7 +31,7 @@ def save_settings(changes):
             raise ValueError("Scan interval must be 15..600 seconds")
         if type(value['cache_retention_days']) is not int or not 1 <= value['cache_retention_days'] <= 365:
             raise ValueError('Cache retention must be 1..365 days')
-        for key in ("keep_snapshots", "auto_scan", "start_service_on_launch", "keep_in_menu_bar", "app_managed"):
+        for key in ("automatic_updates", "keep_snapshots", "auto_scan", "start_service_on_launch", "keep_in_menu_bar", "app_managed"):
             if type(value[key]) is not bool: raise ValueError(f"{key} must be boolean")
         if not isinstance(value["source_folders"], list): raise ValueError("Folder list required")
         folders = []

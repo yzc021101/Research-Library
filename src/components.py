@@ -22,7 +22,7 @@ def download(item, archive, stop, progress):
     url=urllib.parse.urlsplit(item['url'])
     if url.scheme!='https' or not url.hostname or url.username or url.password:
         raise ValueError('组件下载必须使用不含凭据的 HTTPS 地址')
-    request=urllib.request.Request(item['url'], headers={'User-Agent':'research_library/0.6.3'})
+    request=urllib.request.Request(item['url'], headers={'User-Agent':'research_library/0.6.4'})
     with urllib.request.build_opener(HTTPSOnly(), urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=certifi.where()))).open(request,timeout=30) as response, archive.open('wb') as out:
         if urllib.parse.urlsplit(response.geturl()).scheme!='https': raise ValueError('下载地址不安全')
         count=0
