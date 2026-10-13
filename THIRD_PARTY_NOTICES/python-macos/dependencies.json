@@ -1,0 +1,392 @@
+[
+  {
+    "name": "pymupdf",
+    "version": "1.28.2",
+    "license": "Dual Licensed - GNU AFFERO GPL 3.0 or Artifex Commercial License",
+    "source": ""
+  },
+  {
+    "name": "numpy",
+    "version": "2.5.3",
+    "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+    "source": ""
+  },
+  {
+    "name": "rpds-py",
+    "version": "2026.6.3",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "mcp",
+    "version": "1.30.0",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "fastembed",
+    "version": "0.8.0",
+    "license": "Apache License",
+    "source": ""
+  },
+  {
+    "name": "lxml",
+    "version": "6.1.3",
+    "license": "BSD-3-Clause",
+    "source": "https://lxml.de/"
+  },
+  {
+    "name": "click",
+    "version": "8.5.0",
+    "license": "BSD-3-Clause",
+    "source": ""
+  },
+  {
+    "name": "sse-starlette",
+    "version": "3.4.11",
+    "license": "BSD-3-Clause",
+    "source": ""
+  },
+  {
+    "name": "packaging",
+    "version": "26.3",
+    "license": "Apache-2.0 OR BSD-2-Clause",
+    "source": ""
+  },
+  {
+    "name": "charset-normalizer",
+    "version": "3.5.1",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "jsonschema-specifications",
+    "version": "2025.9.1",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "lance-namespace",
+    "version": "0.12.0",
+    "license": "Apache-2.0",
+    "source": ""
+  },
+  {
+    "name": "requests",
+    "version": "2.34.2",
+    "license": "Apache-2.0",
+    "source": ""
+  },
+  {
+    "name": "defusedxml",
+    "version": "0.7.1",
+    "license": "PSFL",
+    "source": "https://github.com/tiran/defusedxml"
+  },
+  {
+    "name": "hf-xet",
+    "version": "1.6.0",
+    "license": "Apache-2.0",
+    "source": ""
+  },
+  {
+    "name": "openpyxl",
+    "version": "3.1.5",
+    "license": "MIT",
+    "source": "https://openpyxl.readthedocs.io"
+  },
+  {
+    "name": "PyJWT",
+    "version": "2.13.0",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "lance-namespace-urllib3-client",
+    "version": "0.12.0",
+    "license": "Apache-2.0",
+    "source": ""
+  },
+  {
+    "name": "jsonschema",
+    "version": "4.26.0",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "python-pptx",
+    "version": "1.0.2",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "et_xmlfile",
+    "version": "2.0.0",
+    "license": "MIT",
+    "source": "https://foss.heptapod.net/openpyxl/et_xmlfile"
+  },
+  {
+    "name": "pydantic_core",
+    "version": "2.46.5",
+    "license": "MIT",
+    "source": "https://github.com/pydantic/pydantic"
+  },
+  {
+    "name": "pyarrow",
+    "version": "25.0.1",
+    "license": "Apache-2.0",
+    "source": ""
+  },
+  {
+    "name": "tokenizers",
+    "version": "0.23.2",
+    "license": "",
+    "source": ""
+  },
+  {
+    "name": "httpcore",
+    "version": "1.0.9",
+    "license": "BSD-3-Clause",
+    "source": ""
+  },
+  {
+    "name": "starlette",
+    "version": "1.6.0",
+    "license": "BSD-3-Clause",
+    "source": ""
+  },
+  {
+    "name": "fsspec",
+    "version": "2026.7.0",
+    "license": "BSD-3-Clause",
+    "source": ""
+  },
+  {
+    "name": "py_rust_stemmers",
+    "version": "0.1.8",
+    "license": "",
+    "source": ""
+  },
+  {
+    "name": "huggingface_hub",
+    "version": "1.30.0",
+    "license": "Apache-2.0",
+    "source": "https://github.com/huggingface/huggingface_hub"
+  },
+  {
+    "name": "loguru",
+    "version": "0.7.3",
+    "license": "",
+    "source": ""
+  },
+  {
+    "name": "h11",
+    "version": "0.16.0",
+    "license": "MIT",
+    "source": "https://github.com/python-hyper/h11"
+  },
+  {
+    "name": "pydantic",
+    "version": "2.13.5",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "pydantic-settings",
+    "version": "2.15.0",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "pycparser",
+    "version": "3.0",
+    "license": "BSD-3-Clause",
+    "source": ""
+  },
+  {
+    "name": "python-multipart",
+    "version": "0.0.32",
+    "license": "Apache-2.0",
+    "source": ""
+  },
+  {
+    "name": "python-dateutil",
+    "version": "2.9.0.post0",
+    "license": "Dual License",
+    "source": "https://github.com/dateutil/dateutil"
+  },
+  {
+    "name": "PyYAML",
+    "version": "6.0.3",
+    "license": "MIT",
+    "source": "https://pyyaml.org/"
+  },
+  {
+    "name": "onnxruntime",
+    "version": "1.29.0",
+    "license": "MIT License",
+    "source": "https://onnxruntime.ai"
+  },
+  {
+    "name": "idna",
+    "version": "3.19",
+    "license": "BSD-3-Clause",
+    "source": ""
+  },
+  {
+    "name": "cffi",
+    "version": "2.1.1",
+    "license": "MIT-0",
+    "source": ""
+  },
+  {
+    "name": "certifi",
+    "version": "2026.7.22",
+    "license": "MPL-2.0",
+    "source": "https://github.com/certifi/python-certifi"
+  },
+  {
+    "name": "annotated-types",
+    "version": "0.8.0",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "referencing",
+    "version": "0.37.0",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "cryptography",
+    "version": "50.0.1",
+    "license": "Apache-2.0 OR BSD-3-Clause",
+    "source": ""
+  },
+  {
+    "name": "typing-inspection",
+    "version": "0.4.4",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "deprecation",
+    "version": "2.1.0",
+    "license": "Apache 2",
+    "source": "http://deprecation.readthedocs.io/"
+  },
+  {
+    "name": "tqdm",
+    "version": "4.70.0",
+    "license": "MPL-2.0 AND MIT",
+    "source": ""
+  },
+  {
+    "name": "flatbuffers",
+    "version": "25.12.19",
+    "license": "Apache 2.0",
+    "source": "https://google.github.io/flatbuffers/"
+  },
+  {
+    "name": "python-docx",
+    "version": "1.2.0",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "attrs",
+    "version": "26.1.0",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "python-dotenv",
+    "version": "1.2.3",
+    "license": "BSD-3-Clause",
+    "source": ""
+  },
+  {
+    "name": "lancedb",
+    "version": "0.38.0",
+    "license": "",
+    "source": ""
+  },
+  {
+    "name": "xlsxwriter",
+    "version": "3.2.9",
+    "license": "BSD-2-Clause",
+    "source": "https://github.com/jmcnamara/XlsxWriter"
+  },
+  {
+    "name": "urllib3",
+    "version": "2.7.0",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "httpx",
+    "version": "0.28.1",
+    "license": "BSD-3-Clause",
+    "source": ""
+  },
+  {
+    "name": "typing_extensions",
+    "version": "4.16.0",
+    "license": "PSF-2.0",
+    "source": ""
+  },
+  {
+    "name": "mmh3",
+    "version": "5.3.0",
+    "license": "MIT License\n\nCopyright (c) 2011-2026 Hajime Senuma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.",
+    "source": ""
+  },
+  {
+    "name": "filelock",
+    "version": "3.32.5",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "striprtf",
+    "version": "0.0.33",
+    "license": "BSD-3-Clause",
+    "source": ""
+  },
+  {
+    "name": "uvicorn",
+    "version": "0.52.4",
+    "license": "BSD-3-Clause",
+    "source": ""
+  },
+  {
+    "name": "pillow",
+    "version": "12.3.0",
+    "license": "MIT-CMU",
+    "source": ""
+  },
+  {
+    "name": "protobuf",
+    "version": "7.36.1",
+    "license": "3-Clause BSD License",
+    "source": "https://developers.google.com/protocol-buffers/"
+  },
+  {
+    "name": "httpx-sse",
+    "version": "0.4.3",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "anyio",
+    "version": "4.15.1",
+    "license": "MIT",
+    "source": ""
+  },
+  {
+    "name": "six",
+    "version": "1.17.0",
+    "license": "MIT",
+    "source": "https://github.com/benjaminp/six"
+  }
+]

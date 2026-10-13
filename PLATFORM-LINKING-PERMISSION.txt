@@ -1,0 +1,3 @@
+Additional permission under GNU AGPL version 3 section 7
+
+For copyright held by research_library contributors in the native/ and windows/frontend/ source files, permission is granted to link or combine those files with the unmodified Apple platform frameworks, Microsoft .NET, Microsoft Windows App SDK and Windows system runtime libraries, and to convey the resulting combination, provided that the Corresponding Source for the covered project code is supplied under AGPL-3.0-only and the platform components are supplied under their respective licenses. This permission does not alter or grant rights in any third-party code, including PyMuPDF or MuPDF, and imposes no additional restriction on recipients' AGPL rights.

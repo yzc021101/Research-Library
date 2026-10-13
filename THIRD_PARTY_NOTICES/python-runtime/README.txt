@@ -1,0 +1,1 @@
+Additional notices for libraries used by the CPython runtime. OpenSSL 3.5.8 and zlib 1.2.12 versions were verified in the macOS interpreter. Windows Python uses its official build dependencies. These notices supplement the full PSF license and license notices embedded in Python-dependent wheels. No source changes.

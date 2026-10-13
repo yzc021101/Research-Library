@@ -1,0 +1,26 @@
+[
+  {
+    "id": "ocr",
+    "name": "图片文字识别（OCR）",
+    "description": "扫描 PDF 与 Office 内嵌图片识别，中英文。",
+    "entry": "tesseract.exe",
+    "download_bytes": 37793856,
+    "expanded_bytes": 89885555,
+    "sha256": "dabfe96c9fbfcde73ed12380b4eb33820e989ee3fd165b49fdb743a48dbb7597",
+    "file": "ocr-windows-x64.zip",
+    "url": "https://github.com/yzc021101/Research-Library/releases/download/v0.6.3/ocr-windows-x64.zip",
+    "homepage": "https://tesseract-ocr.github.io/tessdoc/Installation.html"
+  },
+  {
+    "id": "legacy-office",
+    "name": "旧版 Office 转换",
+    "description": "本地转换 DOC、PPT、XLS；原文件只读。",
+    "entry": "program/soffice.exe",
+    "download_bytes": 501554319,
+    "expanded_bytes": 1553636096,
+    "sha256": "20ac1bd06306b38f8d69d17a984efa33901ed0af292c0c7b19e22b40940491d8",
+    "file": "legacy-office-windows-x64.zip",
+    "url": "https://github.com/yzc021101/Research-Library/releases/download/v0.6.3/legacy-office-windows-x64.zip",
+    "homepage": "https://www.libreoffice.org/download/download-libreoffice/"
+  }
+]

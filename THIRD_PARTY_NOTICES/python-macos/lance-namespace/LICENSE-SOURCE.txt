@@ -1,0 +1,1 @@
+https://raw.githubusercontent.com/lancedb/lance-namespace/main/LICENSE

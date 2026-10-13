@@ -1,0 +1,1 @@
+Exact Python dependency inventory for this platform is in dependencies.json. License and notice texts are copied unmodified from the installed distributions. Project code is AGPL-3.0-only; upstream dependencies retain their own licenses. Corresponding-source links are listed in ../SOURCES.md.
