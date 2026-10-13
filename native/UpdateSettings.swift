@@ -8,7 +8,7 @@ import SwiftUI
     @Published var error: String?
     private var pollTimer: Timer?
     private var autoTimer: Timer?
-    var current: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.6.4" }
+    var current: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.6.5" }
     var phase: String { state["phase"] as? String ?? "idle" }
     var release: [String: Any] { state["release"] as? [String: Any] ?? [:] }
     init(root: URL) {

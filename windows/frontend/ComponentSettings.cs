@@ -12,7 +12,7 @@ public sealed partial class MainWindow {
   Body.Children.Add(Card(Row(Stack(Text("基础运行环境",16),Text(Engine.Available?"已就绪 · 完整发行版自带 Python、.NET 和基础依赖":"运行环境缺失 · 请下载完整发行版，并保留整个解压目录",14,true)),Button("下载完整安装包",()=>Windows.System.Launcher.LaunchUriAsync(new Uri(Engine.ReleaseURL)).AsTask()))));
   Body.Children.Add(Row(Text("官方组件来源",14),Stack(Button("Python",()=>Windows.System.Launcher.LaunchUriAsync(new Uri("https://www.python.org/downloads/")).AsTask()),Button("OCR",()=>Windows.System.Launcher.LaunchUriAsync(new Uri("https://tesseract-ocr.github.io/tessdoc/Installation.html")).AsTask()),Button("LibreOffice",()=>Windows.System.Launcher.LaunchUriAsync(new Uri("https://www.libreoffice.org/download/download-libreoffice/")).AsTask()))));
   Note("基础运行环境随完整安装包提供，无需单独安装 Python。OCR 和旧版 Office 转换器按需下载，校验后安装到本应用资料库目录。安装或移除后重启服务。系统已有组件只复用，不会被卸载。");
-  Body.Children.Add(Row(Text("AGPL-3.0 开源软件",14),Button("许可证与对应源码",()=>Windows.System.Launcher.LaunchUriAsync(new Uri("https://github.com/yzc021101/Research-Library/tree/v0.6.4")).AsTask())));
+  Body.Children.Add(Row(Text("AGPL-3.0 开源软件",14),Button("许可证与对应源码",()=>Windows.System.Launcher.LaunchUriAsync(new Uri("https://github.com/yzc021101/Research-Library/tree/v0.6.5")).AsTask())));
   componentPanel=new StackPanel{Spacing=12};Body.Children.Add(componentPanel);componentFingerprint="";UpdateComponents();
  }
  static string Size(JsonNode? n)=>$"{(n?.GetValue<long>()??0)/1048576d:F1} MB";

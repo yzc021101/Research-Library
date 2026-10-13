@@ -183,7 +183,7 @@ try {
         script=re.sub(r'@@([A-Z]+)@@',lambda match:values[match[1]],script)
         encoded=base64.b64encode(script.encode('utf-16-le')).decode()
         exe=Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'
-        subprocess.Popen([str(exe),'-NoProfile','-NonInteractive','-EncodedCommand',encoded],cwd=HOME,creationflags=subprocess.CREATE_NO_WINDOW|subprocess.DETACHED_PROCESS,close_fds=True)
+        subprocess.Popen([str(exe),'-NoProfile','-NonInteractive','-EncodedCommand',encoded],cwd=HOME,creationflags=subprocess.CREATE_NO_WINDOW,close_fds=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     else:
         # Arguments, not string interpolation, carry all user-controlled paths.
         script='''target=$1; staged=$2; backup=$3; result=$4; desktop=$5; worker=$6; root=$7
@@ -228,7 +228,7 @@ def lock():
         yield
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('action',choices=['check','download','install','finish']);p.add_argument('--current',default='0.6.4');p.add_argument('--target',type=Path);p.add_argument('--pid',type=int);p.add_argument('--automatic',action='store_true');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('action',choices=['check','download','install','finish']);p.add_argument('--current',default='0.6.5');p.add_argument('--target',type=Path);p.add_argument('--pid',type=int);p.add_argument('--automatic',action='store_true');a=p.parse_args()
     with lock():
         try:
             if a.action=='check':

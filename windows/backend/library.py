@@ -380,7 +380,7 @@ class Library(StorageMixin):
         with self.lock:
             sources = [dict(x) for x in self.db.execute("SELECT * FROM sources ORDER BY path")]
             docs = self.active_docs()
-            return {"software_license": "AGPL-3.0-only", "source_code_url": "https://github.com/yzc021101/Research-Library/tree/v0.6.4", "root": str(ROOT), "inbox": str(INBOX), "active_documents": len(docs),
+            return {"software_license": "AGPL-3.0-only", "source_code_url": "https://github.com/yzc021101/Research-Library/tree/v0.6.5", "root": str(ROOT), "inbox": str(INBOX), "active_documents": len(docs),
                     "supported_formats": sorted(SUPPORTED),
                     "search_suggestions": search_suggestions(docs.values()),
                     "stored_versions": self.db.execute("SELECT count(*) FROM documents").fetchone()[0],

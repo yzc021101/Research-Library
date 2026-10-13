@@ -1,6 +1,6 @@
 # Corresponding source and build provenance
 
-For release v0.6.4, the application source and build scripts are at https://github.com/yzc021101/Research-Library/tree/v0.6.4 . The AGPL license and frontend additional permission are at the repository root. Application binaries are built from this tag; no source modifications were made to PyMuPDF/MuPDF.
+For release v0.6.5, the application source and build scripts are at https://github.com/yzc021101/Research-Library/tree/v0.6.5 . The AGPL license and frontend additional permission are at the repository root. Application binaries are built from this tag; no source modifications were made to PyMuPDF/MuPDF.
 
 Third-party components are unchanged from v0.6.3. Download their matching source assets at https://github.com/yzc021101/Research-Library/releases/tag/v0.6.3 :
 
