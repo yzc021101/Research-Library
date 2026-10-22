@@ -10,6 +10,8 @@ import csv
 import io
 import re
 import zipfile
+import time
+from spooled import Spool
 
 from table_content import cell as table_cell, table as make_table, slice_tables
 from excel_compat import open_compatible_books, formula_text
@@ -22,9 +24,9 @@ SUPPORTED |= LEGACY
 MAX_BYTES = 100 * 1024 * 1024
 MAX_TEXT = 8_000_000
 MAX_UNITS = 10000
-MAX_CELLS = 500000
+MAX_CELLS = 2_000_000
 UNIT_SIZE = 12000
-PARSER_VERSION = 5
+PARSER_VERSION = 6
 
 @dataclass
 class Unit:
@@ -164,71 +166,92 @@ def presentation_units(path):
     return units, {'title': deck.core_properties.title, 'author': deck.core_properties.author}, [
         '提取幻灯片文字、表格、可读取的图表数据和备注；图片、SmartArt 与复杂图形需要打开原文件核对。']
 
-def spreadsheet_units(path):
-    from datetime import datetime, date, time
+def reading_limits(options=None):
+    large = (options or {}).get('large_file_mode', False)
+    return (5_000_000, 80_000_000, 50000, 900) if large else (MAX_CELLS, 32_000_000, 20000, 300)
+
+
+def spreadsheet_units(path, options=None, cancel=None, progress=None):
+    from datetime import datetime, date, time as dt_time
     from openpyxl.utils import get_column_letter, column_index_from_string
-    units = []
+    from excel_compat import sparse_rows
+    from office_ocr import cancelled
+    units = Spool()
     formula_book, cached_book, recovery_warnings = open_compatible_books(path)
+    cell_limit, text_limit, unit_limit, seconds = reading_limits(options)
+    count = text_count = 0
+    deadline = time.monotonic() + seconds
+    stopped = False
     try:
         props = {'title': formula_book.properties.title, 'author': formula_book.properties.creator}
-        count = 0
         for sheet, cached in zip(formula_book.worksheets, cached_book.worksheets):
-            if (sheet.max_row or 0) * (sheet.max_column or 0) > MAX_CELLS:
-                raise ValueError(f'工作表 {sheet.title} 超过 {MAX_CELLS} 个单元格的读取范围限制。')
-            parts, size, first, last, headers, header_row = [], 0, None, None, {}, None
-            grid_rows = []
+            parts, size, first, last, grid_rows = [], 0, None, None, []
+            context = ''
             def flush():
                 nonlocal parts, size, first, last, grid_rows
                 if parts:
-                    location = {'kind': 'cells', 'sheet': sheet.title, 'row_start': first, 'row_end': last,
-                        'range': f'A{first}:{get_column_letter(sheet.max_column or 1)}{last}',
-                        'label': f'{sheet.title} · 行 {first}–{last}', 'hidden': sheet.sheet_state != 'visible'}
                     columns = sorted({key for r in grid_rows for key in r['cells']}, key=lambda k: (len(k), k))
-                    if columns and column_index_from_string(columns[-1]) <= 256:
-                        columns = [get_column_letter(i) for i in range(1, column_index_from_string(columns[-1])+1)]
+                    last_col = columns[-1] if columns else 'A'
+                    location = {'kind': 'cells', 'sheet': sheet.title, 'row_start': first, 'row_end': last,
+                        'range': f'A{first}:{last_col}{last}', 'label': f'{sheet.title} · 行 {first}–{last}',
+                        'hidden': sheet.sheet_state != 'visible'}
+                    if columns and column_index_from_string(last_col) <= 256:
+                        columns = [get_column_letter(i) for i in range(1, column_index_from_string(last_col)+1)]
                     units.append(Unit('\n'.join(parts), location, tables=[make_table(sheet.title, grid_rows,
-                        [{'key': key, 'label': key} for key in columns], f'首个非空行参考：{context}')]))
+                        [{'key': key, 'label': key} for key in columns], context)]))
                 parts, size, first, last, grid_rows = [], 0, None, None, []
-            for row_no, (row, values) in enumerate(zip(sheet.iter_rows(), cached.iter_rows()), 1):
+            for (row_no, row), (cached_no, values) in zip(sparse_rows(sheet, cancel), sparse_rows(cached, cancel), strict=True):
+                cancelled(cancel)
+                if row_no != cached_no: raise ValueError('公式与结果行号不一致，已停止读取。')
+                reason = None
+                if count + len(row) > cell_limit: reason = f'有效单元格超过 {cell_limit:,} 格'
+                elif time.monotonic() > deadline: reason = f'读取时间超过 {seconds} 秒'
+                if reason:
+                    recovery_warnings.append(f'部分入库：{reason}；从 {sheet.title} 第 {row_no} 行起未读取，可开启大文件模式后重新同步。')
+                    stopped = True; break
                 count += len(row)
-                if count > MAX_CELLS: raise ValueError('工作簿总单元格数超过读取限制。')
-                if all(c.value is None for c in row): continue
-                if header_row is None:
-                    header_row = row_no
-                    headers = {i: formula_text(c.value) if c.data_type == 'f' else str(c.value) for i, c in enumerate(row) if c.value is not None}
+                if not row: continue
+                if progress and row_no % 200 == 0: progress(stage='reading', location=f'{sheet.title} · 第 {row_no} 行')
+                if not context:
+                    context = '首个非空行参考：' + ' | '.join(f'{get_column_letter(i)}={formula_text(c.value) if c.data_type == "f" else c.value}' for i,c in row.items())[:2000]
                 items, cells = [], {}
-                for i, (cell, cached_cell) in enumerate(zip(row, values)):
-                    if cell.value is None: continue
-                    value = formula_text(cell.value) if cell.data_type == 'f' else str(cell.value)
-                    if cell.data_type == 'f':
-                        value = f'公式 {value}；保存的结果: {cached_cell.value if cached_cell.value is not None else "未保存（未重新计算）"}'
-                    display = cached_cell.value if cell.data_type == 'f' else cell.value
-                    if cell.data_type == 'f' and display is None: display = '未保存（未重新计算）'
+                for col, cell in row.items():
+                    cached_cell = values.get(col)
+                    display = cached_cell.value if cell.data_type == 'f' and cached_cell else cell.value
+                    if cell.data_type == 'f' and cached_cell is None: display = '未保存（未重新计算）'
                     if isinstance(display, datetime):
-                        display = display.date().isoformat() if display.time() == time() and 'h' not in cell.number_format.lower() and 's' not in cell.number_format.lower() else display.isoformat(sep=' ')
-                    elif isinstance(display, (date, time)): display = display.isoformat()
+                        display = display.date().isoformat() if display.time() == dt_time() and 'h' not in cell.number_format.lower() and 's' not in cell.number_format.lower() else display.isoformat(sep=' ')
+                    elif isinstance(display, (date, dt_time)): display = display.isoformat()
                     extras = {'coordinate': cell.coordinate, 'number_format': cell.number_format}
                     if cell.data_type == 'f':
                         extras['formula'] = formula_text(cell.value)
-                        extras['cached_result'] = True
-                    cells[get_column_letter(i+1)] = table_cell(display, **extras)
-                    number_format = f'；数字格式 {cell.number_format}' if cell.number_format != 'General' else ''
-                    items.append(f'{cell.coordinate}={value}{number_format}')
-                # Repeat explicit first-row context, without claiming it is always a header.
-                context = ' | '.join(f'{get_column_letter(i+1)}{header_row}={v}' for i, v in headers.items())
-                line = f'[{sheet.title} 行 {row_no}；首个非空行参考: {context}] ' + ' | '.join(items)
-                if size + len(line) > UNIT_SIZE: flush()
+                        extras['cached_result'] = cached_cell is not None
+                    cells[get_column_letter(col)] = table_cell(display, **extras)
+                    items.append(f'{cell.coordinate}={display}')
+                line = f'[{sheet.title} 行 {row_no}] ' + ' | '.join(items)
+                if parts and size + len(line) + 1 > UNIT_SIZE: flush()
+                if text_count + len(line) + len(context) + 1 > text_limit or len(units) >= unit_limit:
+                    recovery_warnings.append(f'部分入库：达到文本或阅读单元上限；从 {sheet.title} 第 {row_no} 行起未读取，可开启大文件模式后重新同步。')
+                    stopped = True; break
+                if not parts:
+                    parts = [context]; size = len(context)+1; text_count += size
                 first = first or row_no; last = row_no
-                grid_rows.append({'index': row_no, 'cells': cells, '_start': size, '_end': size + len(line)})
-                parts.append(line); size += len(line) + 1
+                grid_rows.append({'index': row_no, 'cells': cells, '_start': size, '_end': size+len(line)})
+                parts.append(line); size += len(line)+1; text_count += len(line)+1
             flush()
-        return units, props, recovery_warnings + ['公式不执行；保存结果可能缺失或过期。空白格、合并单元格未填充；图表和图片请核对原文件。']
+            if stopped: break
+        return units, props, recovery_warnings + ['公式不执行；检索采用保存的结果，原公式保留在表格详情中。保存结果可能缺失或过期。']
+    except BaseException:
+        units.close(); raise
     finally:
-        formula_book.close()
-        if cached_book: cached_book.close()
+        for book in (formula_book, cached_book):
+            if book:
+                book.close()
+                if hasattr(book, '_research_stream'): book._research_stream.close()
 
-def delimited_units(text, delimiter):
-    units, parts, size, first, last, header = [], [], 0, None, None, None
+
+def delimited_units(text, delimiter, options=None, cancel=None):
+    units, parts, size, first, last, header = Spool(), [], 0, None, None, None
     grid_rows = []
     reader = csv.reader(io.StringIO(text, newline=''), delimiter=delimiter)
     total = 0
@@ -241,8 +264,10 @@ def delimited_units(text, delimiter):
                      for i in range(max(len(r['cells']) for r in grid_rows))], '列标题参考第一条记录')]))
         parts, size, first, last, grid_rows = [], 0, None, None, []
     for n, row in enumerate(reader, 1):
-        total += len(row)
-        if total > MAX_CELLS: raise ValueError('表格单元格数超过读取限制。')
+        from office_ocr import cancelled
+        cancelled(cancel)
+        total += sum(bool(v) for v in row)
+        if total > reading_limits(options)[0]: raise ValueError('表格单元格数超过读取限制。')
         if header is None: header = row
         line = f'[记录 {n}] ' + ' | '.join(f'列 {i+1}（{header[i] if i < len(header) else ""}）={v!r}' for i, v in enumerate(row))
         if size + len(line) > UNIT_SIZE: flush()
@@ -252,12 +277,33 @@ def delimited_units(text, delimiter):
     flush()
     return units
 
-def extract_document(path, progress=None, cancel=None):
-    suffix = path.suffix.lower()
+def extract_document(path, progress=None, cancel=None, options=None):
+    original_suffix = suffix = path.suffix.lower()
+    format_warning = None
+    if suffix == '.xls' and zipfile.is_zipfile(path):
+        check_package(path)
+        with zipfile.ZipFile(path) as z:
+            if 'xl/workbook.xml' not in z.namelist():
+                raise ValueError('此 XLS 扩展名对应的内容不是 XLSX 工作簿；请检查实际文件格式。')
+        suffix = '.xlsx'
+        format_warning = '已按文件内容识别为 XLSX；原文件使用 XLS 扩展名，文件名及内容未修改。'
+
+    if suffix == '.xls':
+        from text_workbook import detect, converted
+        kind = detect(path)
+        if kind:
+            with converted(path, kind) as derived:
+                metadata, units = extract_document(derived, progress, cancel, options)
+            metadata.update(file_name=path.name, file_format='xls', detected_format=kind)
+            if metadata['metadata_provenance']['fields']['title']['source'] == 'filename':
+                metadata['title'] = path.stem
+                metadata['metadata_provenance']['fields']['title']['evidence'] = path.stem
+            metadata['extraction_warnings'].append('按实际内容识别为文本表格；只读取表格文字，不运行脚本、宏或外部链接。位置按提取表格计算。')
+            return metadata, units
     if suffix in LEGACY:
         from legacy_office import convert
         derived, conversion = convert(path, progress, cancel)
-        metadata, units = extract_document(derived, progress, cancel)
+        metadata, units = extract_document(derived, progress, cancel, options)
         metadata.update(file_name=path.name, file_format=suffix[1:], conversion=conversion)
         fields = metadata['metadata_provenance']['fields']
         if fields['title']['source'] == 'filename':
@@ -265,21 +311,24 @@ def extract_document(path, progress=None, cancel=None):
             fields['title']['evidence'] = path.stem
         warning = '旧版 Office 经本地转换后提取；位置以转换副本为准，排版或公式缓存可能变化，请核对原文件。'
         metadata['extraction_warnings'].append(warning)
+        converted_units = Spool()
         for unit in units:
             unit.location.update(source_format=suffix[1:], location_basis='converted_copy')
             unit.location['label'] += '（转换副本）'
             unit.warnings.append(warning)
-        return metadata, units
+            converted_units.append(unit)
+        return metadata, converted_units
     if suffix not in SUPPORTED - {'.pdf'}: raise ValueError('不支持此文件格式')
     if path.stat().st_size > MAX_BYTES: raise ValueError('非 PDF 文件超过 100 MB 读取限制。')
     props, warnings, encoding, ocr_summary = {}, [], None, None
     if suffix in {'.docx', '.pptx', '.xlsx'}:
         check_package(path)
-        units, props, warnings = {'.docx': word_units, '.pptx': presentation_units, '.xlsx': spreadsheet_units}[suffix](path)
+        units, props, warnings = spreadsheet_units(path, options, cancel, progress) if suffix == '.xlsx' else {'.docx': word_units, '.pptx': presentation_units}[suffix](path)
         from office_ocr import extract_images
-        images, failures, ocr_summary = extract_images(path, progress, cancel)
+        images, failures, ocr_summary = extract_images(path, progress, cancel, suffix)
         units.extend(images)
         warnings.extend(failures)
+        if failures: warnings.append('部分入库：部分内嵌图片未完成 OCR；已保留正文及其他可识别内容。')
         if ocr_summary['images']:
             warnings.append('内嵌图片使用本地 OCR；文字和数字可能有误，不还原图表关系。图片预览保留出处，但不代表整页排版。')
         if not any(u.text.strip() for u in units) and failures:
@@ -293,14 +342,19 @@ def extract_document(path, progress=None, cancel=None):
             warnings = ['RTF 行号指提取后的正文行；图片和排版未保留。']
         else:
             text, encoding = decode_text(raw)
-            units = delimited_units(text, '\t' if suffix == '.tsv' else ',') if suffix in {'.csv', '.tsv'} else text_units(text)
-    if sum(len(u.text) for u in units) > MAX_TEXT or len(units) > MAX_UNITS:
-        raise ValueError('提取内容超过 800 万字符或 10000 个阅读单元；请拆分文件。')
+            units = delimited_units(text, '\t' if suffix == '.tsv' else ',', options, cancel) if suffix in {'.csv', '.tsv'} else text_units(text)
+    if format_warning: warnings.append(format_warning)
+    _, text_limit, unit_limit, _ = reading_limits(options)
     if not any(u.text.strip() for u in units):
         raise ValueError('未提取到可检索文字；文档为空、图片没有可识别文字，或图片格式不受支持。')
     # Bound response size even for unusually long source lines/rows.
-    bounded = []
+    bounded = Spool()
+    text_count = 0
     for u in units:
+        if text_count + len(u.text) > text_limit or len(bounded) >= unit_limit:
+            warnings.append(f'部分入库：达到 {text_limit:,} 字符或 {unit_limit:,} 个阅读单元上限；其余内容未入库，可开启大文件模式后重新同步。')
+            break
+        text_count += len(u.text)
         start = 0
         while start < max(1, len(u.text)):
             end = min(start + UNIT_SIZE, len(u.text))
@@ -314,7 +368,9 @@ def extract_document(path, progress=None, cancel=None):
             bounded.append(Unit(u.text[start:end], loc, u.warnings, slice_tables(u.tables, start, end)))
             if end == len(u.text): break
             start = end
+    if isinstance(units, Spool): units.close()
     units = bounded
+    if not units: raise ValueError('首个阅读单元超过当前限额；请开启大文件模式或拆分文件。')
     title = (props.get('title') or '').strip() or path.stem
     cover = units[0].text
     # Only unprefixed explicit lines count as publisher/date evidence.
@@ -328,6 +384,7 @@ def extract_document(path, progress=None, cancel=None):
         'author': props.get('author') or None, 'institution': institution, 'published_date': published,
         'publication_date_display': display, 'publication_date_precision': precision,
         'source_type': 'unclassified', 'companies': [], 'metadata_schema_version': SCHEMA_VERSION,
-        'parser_version': PARSER_VERSION, 'ocr_summary': ocr_summary, 'encoding': encoding, 'extraction_warnings': warnings,
+        'parser_version': PARSER_VERSION, 'large_file_mode': (options or {}).get('large_file_mode', False),
+        'partial': any('部分入库' in w for w in warnings), 'detected_format': suffix[1:], 'ocr_summary': ocr_summary, 'encoding': encoding, 'extraction_warnings': warnings,
         'metadata_provenance': {'fields': fields, 'policy': 'Explicit source evidence only; creation dates are not publication dates.'}}
     return metadata, units

@@ -18,7 +18,7 @@ from defusedxml import ElementTree as ET
 from PIL import Image, ImageOps
 
 CACHE = ROOT / 'cache/office-ocr'
-VERSION = 3
+VERSION = 5
 MAX_IMAGES = 500
 MAX_PIXELS = 32_000_000
 NS = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
@@ -87,23 +87,24 @@ def pictures(z, part, element, location):
                       xf is not None and xf.get('flipH') in {'1', 'true'},
                       xf is not None and xf.get('flipV') in {'1', 'true'})
 
-def embedded_images(path):
+def embedded_images(path, suffix=None):
+    suffix = suffix or path.suffix.lower()
     with zipfile.ZipFile(path) as z:
-        if path.suffix.lower() == '.docx':
+        if suffix == '.docx':
             part = 'word/document.xml'
             body = xml(z, part).find('w:body', NS)
             blocks = [e for e in body if e.tag in {tag('w:p'), tag('w:tbl')}]
             for n, block in enumerate(blocks, 1):
                 yield from pictures(z, part, block, {'parent_kind': 'paragraphs', 'block_start': n,
                     'block_end': n, 'label': f'正文块 {n}'})
-        elif path.suffix.lower() == '.pptx':
+        elif suffix == '.pptx':
             part = 'ppt/presentation.xml'; rels = relationships(z, part)
             for n, slide in enumerate(xml(z, part).findall('p:sldIdLst/p:sldId', NS), 1):
                 slide_part = rels.get(slide.get(tag('r:id')))
                 if slide_part:
                     yield from pictures(z, slide_part, xml(z, slide_part),
                         {'parent_kind': 'slide', 'slide': n, 'label': f'幻灯片 {n}'})
-        elif path.suffix.lower() == '.xlsx':
+        elif suffix == '.xlsx':
             from openpyxl.utils import get_column_letter
             part = 'xl/workbook.xml'; rels = relationships(z, part)
             for sheet in xml(z, part).findall('s:sheets/s:sheet', NS):
@@ -157,11 +158,21 @@ def recognize(picture, event=None):
         except (OSError, ValueError): pass
     executable = shutil.which('tesseract')
     if not executable: raise RuntimeError('未找到 Tesseract；安装本地 OCR 引擎及 eng、chi_sim 语言包后重新同步。')
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', Image.DecompressionBombWarning)
-        with Image.open(io.BytesIO(picture.blob)) as original:
-            if original.width * original.height > MAX_PIXELS: raise ValueError('图片超过 3200 万像素，已跳过 OCR。')
-            image = ImageOps.exif_transpose(original).convert('RGBA')
+    with Image.open(io.BytesIO(picture.blob)) as header:
+        vector = header.format == 'WMF'
+    if vector:
+        from office_vector import rasterize
+        image, source_dimensions = rasterize(picture.blob, event)
+    else:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(picture.blob)) as original:
+                source_dimensions = [original.width, original.height]
+                if original.width * original.height > 128_000_000: raise ValueError('图片超过安全解码上限（1.28 亿像素）；请拆分图片后重试。')
+                if original.width * original.height > MAX_PIXELS:
+                    scale = (MAX_PIXELS / (original.width * original.height)) ** .5
+                    original.thumbnail((max(1, int(original.width*scale)), max(1, int(original.height*scale))), Image.Resampling.LANCZOS)
+                image = ImageOps.exif_transpose(original).convert('RGBA')
     w, h = image.size
     l, t, r, b = picture.crop
     box = (round(w*l/100000), round(h*t/100000), round(w*(1-r/100000)), round(h*(1-b/100000)))
@@ -191,19 +202,19 @@ def recognize(picture, event=None):
         text = re.sub(r'(?<=[\u3400-\u9fff])[ \t]+(?=[\u3400-\u9fff])', '', text)
         cancelled(event)
         saved = {'text': text, 'engine': 'tesseract', 'languages': 'eng+chi_sim', 'version': VERSION,
-                 'source_sha256': hashlib.sha256(picture.blob).hexdigest(), 'source_dimensions': [w, h],
+                 'source_sha256': hashlib.sha256(picture.blob).hexdigest(), 'source_dimensions': source_dimensions,
                  'preview_note': '嵌入图片预览（应用图片裁剪与旋转，最长边 2048 像素）；不代表整页排版。'}
         tmp = record.with_suffix(f'.{threading.get_ident()}.tmp')
         tmp.write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8"); tmp.replace(record)
         return {**saved, 'image_path': str(preview.relative_to(ROOT)), 'cache_hit': False}
     finally: temp.unlink(missing_ok=True)
 
-def extract_images(path, progress=None, event=None):
+def extract_images(path, progress=None, event=None, suffix=None):
     # Import here to avoid a circular module dependency.
     from document_formats import Unit
     units, errors = [], []
     summary = {'images': 0, 'recognized': 0, 'empty': 0, 'failed': 0, 'cache_hits': 0}
-    for n, picture in enumerate(embedded_images(path), 1):
+    for n, picture in enumerate(embedded_images(path, suffix), 1):
         cancelled(event)
         if n > MAX_IMAGES:
             errors.append('内嵌图片超过 500 张，只识别前 500 张。'); summary['failed'] += 1; break

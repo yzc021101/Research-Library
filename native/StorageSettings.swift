@@ -30,7 +30,7 @@ struct StorageSettings: View {
         .disabled(working || !m.running || m.busy || m.modelBusy)
         .task { await refresh() }
     }
-    func size(_ n: Any?) -> String { guard let n = n as? NSNumber else { return "—" }; return ByteCountFormatter.string(fromByteCount: n.int64Value, countStyle: .file) }
+    func size(_ n: Any?) -> String { guard let n = n as? NSNumber else { return "—" }; return researchLibraryFileSize(n.int64Value) }
     func refresh() async {
         working = true; defer { working = false }
         do { info = try await m.post("/storage/status") } catch { result = error.localizedDescription }
@@ -49,4 +49,9 @@ struct StorageSettings: View {
             } catch { result = error.localizedDescription }
         }
     }
+}
+
+func researchLibraryFileSize(_ bytes: Int64) -> String {
+    if bytes == 0 { return "0 KB" }
+    return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
 }

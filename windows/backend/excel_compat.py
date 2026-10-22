@@ -20,40 +20,76 @@ def formula_text(value):
 
 
 def compatible_workbook(path):
+    from openpyxl.worksheet.print_settings import PrintTitles
     with zipfile.ZipFile(path) as original:
-        if 'xl/styles.xml' not in original.namelist(): return path, []
-        raw = original.read('xl/styles.xml')
-        root = ET.fromstring(raw)  # Malformed XML is deliberately not concealed.
-        allowed = {
-            'vertical': {'top', 'center', 'bottom', 'justify', 'distributed'},
-            'horizontal': {'general', 'left', 'center', 'right', 'fill', 'justify', 'centerContinuous', 'distributed'},
-        }
-        repaired = []
-        for alignment in root.iter('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}alignment'):
-            for name, values in allowed.items():
-                value = alignment.get(name)
-                if value is not None and value not in values:
-                    repaired.append(f'{name}={value!r}')
-                    del alignment.attrib[name]
-        if not repaired: return path, []
+        replacements, warnings = {}, []
+        if 'xl/styles.xml' in original.namelist():
+            root = ET.fromstring(original.read('xl/styles.xml'))
+            allowed = {'vertical': {'top','center','bottom','justify','distributed'},
+                       'horizontal': {'general','left','center','right','fill','justify','centerContinuous','distributed'}}
+            repaired = []
+            for alignment in root.iter('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}alignment'):
+                for name, values in allowed.items():
+                    value = alignment.get(name)
+                    if value is not None and value not in values:
+                        repaired.append(f'{name}={value!r}'); del alignment.attrib[name]
+            if repaired:
+                replacements['xl/styles.xml'] = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+                warnings.append('兼容读取：在内存副本中忽略无效 Excel 对齐样式；原文件、单元格及数字格式未修改。')
+        if 'xl/workbook.xml' in original.namelist():
+            workbook = ET.fromstring(original.read('xl/workbook.xml'))
+            removed = 0
+            for parent in workbook.iter():
+                for child in list(parent):
+                    if child.get('name') == '_xlnm.Print_Titles':
+                        try: PrintTitles.from_string(child.text or '')
+                        except (ValueError, TypeError): parent.remove(child); removed += 1
+            if removed:
+                replacements['xl/workbook.xml'] = ET.tostring(workbook, encoding='utf-8', xml_declaration=True)
+                warnings.append(f'兼容读取：在内存副本中忽略 {removed} 条无效打印标题定义；不修改原文件、工作表内容或公式。')
+        if not replacements: return path, warnings
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as fixed:
             for entry in original.infolist():
-                fixed.writestr(entry, ET.tostring(root, encoding='utf-8', xml_declaration=True)
-                               if entry.filename == 'xl/styles.xml' else original.read(entry))
-        warning = '已兼容读取不规范的 Excel 对齐样式（' + '、'.join(dict.fromkeys(repaired)) + '）；仅在内存中忽略无效对齐值，原文件、单元格值及数字格式未修改。'
-        return buffer.getvalue(), [warning]
+                fixed.writestr(entry, replacements.get(entry.filename, original.read(entry)))
+        return buffer.getvalue(), warnings
 
 
 def open_compatible_books(path):
     from openpyxl import load_workbook
     source, warnings = compatible_workbook(path)
     def load(cached):
-        return load_workbook(io.BytesIO(source) if isinstance(source, bytes) else source,
-                             read_only=True, data_only=cached, keep_links=False)
+        stream = io.BytesIO(source) if isinstance(source, bytes) else open(source, 'rb')
+        try:
+            book = load_workbook(stream, read_only=True, data_only=cached, keep_links=False)
+            book._research_stream = stream
+            return book
+        except BaseException:
+            stream.close()
+            raise
     formulas = load(False)
     try:
         return formulas, load(True), warnings
     except Exception:
         formulas.close()
+        formulas._research_stream.close()
         raise
+
+
+def sparse_rows(sheet, cancel=None):
+    """Use the pinned openpyxl 3.1 parser without expanding absent cells/rows.
+
+    Coordinates, date styles, shared strings and array formulas use openpyxl's
+    normal reader. Ignore producer-supplied dimensions, which may be stale.
+    """
+    from openpyxl.worksheet._reader import WorkSheetParser
+    from openpyxl.cell.read_only import ReadOnlyCell
+    from office_ocr import cancelled
+    with sheet._get_source() as stream:
+        parser = WorkSheetParser(stream, sheet._shared_strings,
+            data_only=sheet.parent.data_only, epoch=sheet.parent.epoch,
+            date_formats=sheet.parent._date_formats,
+            timedelta_formats=sheet.parent._timedelta_formats)
+        for index, row in parser.parse():
+            cancelled(cancel)
+            yield index, {c['column']: ReadOnlyCell(sheet, **c) for c in row if c['value'] is not None}

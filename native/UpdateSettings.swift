@@ -8,7 +8,7 @@ import SwiftUI
     @Published var error: String?
     private var pollTimer: Timer?
     private var autoTimer: Timer?
-    var current: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.6.7" }
+    var current: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.6.8" }
     var phase: String { state["phase"] as? String ?? "idle" }
     var release: [String: Any] { state["release"] as? [String: Any] ?? [:] }
     init(root: URL) {
@@ -59,7 +59,7 @@ struct UpdateSettings: View {
                 HStack { Text("新版本 \(v)"); Spacer(); if let text = updater.release["release_url"] as? String, let url = URL(string: text) { Link("更新说明", destination: url) } }
             }
             if updater.phase == "available" {
-                HStack { Text(ByteCountFormatter.string(fromByteCount: (updater.release["size"] as? NSNumber)?.int64Value ?? 0, countStyle: .file)).foregroundStyle(.secondary); Spacer(); Button("下载更新") { Task { await updater.run("download") } }.disabled(updater.working) }
+                HStack { Text(researchLibraryFileSize((updater.release["size"] as? NSNumber)?.int64Value ?? 0)).foregroundStyle(.secondary); Spacer(); Button("下载更新") { Task { await updater.run("download") } }.disabled(updater.working) }
             }
             if updater.phase == "ready" {
                 HStack { Text("已下载并校验").foregroundStyle(.secondary); Spacer(); Button("安装并重启…") { install() }.disabled(updater.working || m.busy || m.modelBusy) }

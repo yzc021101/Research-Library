@@ -12,7 +12,7 @@ class UpdaterTests(unittest.TestCase):
   for n in ['paths','components','updater']:sys.modules.pop(n,None)
   self.u=importlib.import_module('updater');self.u.HOME.mkdir()
  def tearDown(self):self.tmp.cleanup()
- def release(self,tag='v0.6.7'):
+ def release(self,tag='v0.6.8'):
   u=self.u;n=u.asset_name()
   return {'tag_name':tag,'assets':[{'name':n,'state':'uploaded','browser_download_url':u.REPO+'/releases/download/'+tag+'/'+n,'digest':'sha256:'+'a'*64,'size':20}]}
  def test_numeric_versions(self):
@@ -20,7 +20,7 @@ class UpdaterTests(unittest.TestCase):
   for v in ['v1.2.3-beta','../foo','1.2','1.2.3\n']:
    with self.assertRaises(ValueError):self.u.version(v)
  def test_release_trust(self):
-  self.assertEqual(self.u.release_asset(self.release())['version'],'0.6.7')
+  self.assertEqual(self.u.release_asset(self.release())['version'],'0.6.8')
   for key,val in [('browser_download_url','https://example.com/a'),('digest',''),('size',-1)]:
    d=self.release();d['assets'][0][key]=val
    with self.assertRaises(ValueError):self.u.release_asset(d)
@@ -28,7 +28,7 @@ class UpdaterTests(unittest.TestCase):
   with self.assertRaises(ValueError):self.u.release_asset(d)
  def test_no_downgrade(self):
   with patch.object(self.u,'fetch_release',return_value=self.release('v0.6.3')):
-   self.assertEqual(self.u.check('0.6.7')['phase'],'current')
+   self.assertEqual(self.u.check('0.6.8')['phase'],'current')
  def test_available_and_daily_throttle(self):
   with patch.object(self.u,'fetch_release',return_value=self.release()) as fetch:
    self.assertEqual(self.u.check('0.6.3')['phase'],'available');self.u.check('0.6.3',True);self.assertEqual(fetch.call_count,1)

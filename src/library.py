@@ -3,6 +3,7 @@ from models import available, spec, create_embedder, table_schema
 from document_metadata import extract_metadata, SCHEMA_VERSION
 from document_formats import SUPPORTED, LEGACY, PARSER_VERSION, extract_document
 from table_content import display_content
+from spooled import Spool
 import csv
 import hashlib
 import io
@@ -201,16 +202,9 @@ class Library(StorageMixin):
 
     def ocr(self, page, doc_id, page_no):
         if not shutil.which("tesseract"):
-            return "", "ocr_unavailable"
-        path = ROOT / "tmp" / f"{doc_id}-{page_no}.png"
-        page.get_pixmap(dpi=180).save(path)
-        try:
-            from office_ocr import run_tesseract
-            self.set_progress(stage='ocr', image=page_no, location=f'PDF 第 {page_no} 页')
-            text = run_tesseract(["tesseract", str(path), "stdout", "-l", "eng+chi_sim", "--psm", "3"], self.sync_cancel, timeout=120)
-            return text.strip(), None
-        finally:
-            path.unlink(missing_ok=True)
+            return "", ["未安装 OCR 组件"], []
+        from pdf_ocr import recognize_page
+        return recognize_page(page, page_no, self.sync_cancel, self.set_progress)
 
     def set_progress(self, **values):
         with self.progress_lock: self.sync_progress.update(values)
@@ -224,9 +218,9 @@ class Library(StorageMixin):
 
     def extract(self, path, doc_id):
         if path.suffix.lower() != '.pdf':
-            meta, units = extract_document(path, self.set_progress, self.sync_cancel)
+            meta, units = extract_document(path, self.set_progress, self.sync_cancel, self.settings())
             meta = self.metadata_overrides(path, meta)
-            pages, chunks = [], []
+            pages, chunks = Spool(), Spool()
             for n, unit in enumerate(units, 1):
                 review = unit.location.get('kind') == 'embedded_image'
                 method = f'{path.suffix[1:].lower()}_' + ('tesseract' if review else 'structured_text')
@@ -242,7 +236,8 @@ class Library(StorageMixin):
                 res = subprocess.run(["pdftotext", "-layout", str(path), "-"],
                                      check=True, capture_output=True, timeout=90)
                 layouts = res.stdout.decode("utf-8", errors="replace").split("\f")
-            pages, chunks = [], []
+            pages, chunks = Spool(), Spool()
+            ocr_errors = []
             for i, page in enumerate(pdf):
                 from office_ocr import cancelled
                 cancelled(self.sync_cancel)
@@ -251,21 +246,29 @@ class Library(StorageMixin):
                 method = "pdftotext_layout" if layouts else "pymupdf_text"
                 image_area = max((pymupdf.Rect(im["bbox"]).get_area() for im in page.get_image_info()), default=0)
                 review = False
+                ocr_regions = []
                 if len(native) < 100 or image_area > page.rect.get_area() * 0.25:
-                    ocr, error = self.ocr(page, doc_id, i+1)
+                    ocr, errors, ocr_regions = self.ocr(page, doc_id, i+1)
+                    ocr_errors.extend(errors)
                     review = True
                     if ocr:
                         text += "\n\n[OCR TRANSCRIPTION - CHECK ORIGINAL PAGE]\n" + ocr
                         method += "+tesseract"
-                    else: method += "+" + (error or "ocr_empty")
+                    else: method += "+" + ("ocr_failed" if errors else "ocr_empty")
                 footer = re.search(r"(?:^|\n)[^\n]*?\s{2,}(\d{1,3})\s*$", native)
                 printed = footer[1] if footer else None
                 blocks = [{"bbox_points": list(b[:4]), "text": b[4]} for b in page.get_text("blocks") if b[6] == 0]
                 pages.append((doc_id, i+1, printed, text, method, int(review), json.dumps(blocks),
-                    json.dumps({'kind': 'pdf_page', 'pdf_page': i+1, 'label': f'PDF 第 {i+1} 页'})))
+                    json.dumps({'kind': 'pdf_page', 'pdf_page': i+1, 'label': f'PDF 第 {i+1} 页', 'ocr_regions': ocr_regions})))
                 for j, (part, start, end) in enumerate(split_text(text)):
                     chunks.append((f"{doc_id}:p{i+1}:c{j+1}", doc_id, i+1, start, end, part))
             meta = self.metadata(path, pdf, pages[0][3] if pages else "")
+            from pdf_ocr import VERSION as OCR_VERSION
+            meta['pdf_ocr_version'] = OCR_VERSION
+            meta['partial'] = bool(ocr_errors)
+            if ocr_errors: meta['extraction_warnings'] = ['部分入库：' + e for e in ocr_errors]
+            if not any(p[3].strip() for p in pages):
+                raise ValueError('未提取到可检索文字；' + '；'.join(ocr_errors[:3]))
             return meta, pages, chunks
 
     def sync(self, prepared=False):
@@ -294,6 +297,13 @@ class Library(StorageMixin):
                     doc_id = "d_" + identity[:24]
                     exists = self.db.execute("SELECT metadata FROM documents WHERE doc_id=?", (doc_id,)).fetchone()
                     rebuild = bool(exists and path.suffix.lower() != '.pdf' and (json.loads(exists[0]).get('parser_version') != PARSER_VERSION or (json.loads(exists[0]).get('ocr_summary') or {}).get('failed', 0)))
+                    if exists:
+                        old_metadata = json.loads(exists[0])
+                        if path.suffix.lower() == '.pdf' and old_metadata.get('partial'):
+                            from pdf_ocr import VERSION as OCR_VERSION
+                            rebuild = old_metadata.get('pdf_ocr_version') != OCR_VERSION
+                        if path.suffix.lower() != '.pdf' and old_metadata.get('partial') and old_metadata.get('large_file_mode', False) != self.settings().get('large_file_mode', False):
+                            rebuild = True
                     if exists and not rebuild and path.suffix.lower() in {'.docx', '.pptx', '.xlsx'} | LEGACY:
                         locations = self.db.execute('SELECT location FROM pages WHERE doc_id=?', (doc_id,)).fetchall()
                         for row in locations:
@@ -308,7 +318,7 @@ class Library(StorageMixin):
                             if path.suffix.lower() == '.pdf':
                                 with pymupdf.open(path) as pdf: meta = self.metadata(path, pdf, cover[0] if cover else None)
                             else:
-                                meta, _ = extract_document(path, self.set_progress, self.sync_cancel)
+                                meta, _ = extract_document(path, self.set_progress, self.sync_cancel, self.settings())
                                 meta = self.metadata_overrides(path, meta)
                             # Preserve existing manually supplied nonempty fields during an upgrade.
                             if not path.with_suffix(".metadata.json").exists():
@@ -338,13 +348,14 @@ class Library(StorageMixin):
                                 reuse_vectors = len(ids) == len(chunks) and {x['chunk_id'] for x in ids} == {c[0] for c in chunks}
                         if available(self.embedding["model"]) and not reuse_vectors:
                             self.set_progress(stage='embedding')
-                            vectors = list(self.embedder().passage_embed([c[5] for c in chunks], batch_size=16))
-                            cancelled(self.sync_cancel)
                             table = self.vector_table()
                             table.delete(f"doc_id = '{doc_id}'")
-                            if chunks:
+                            for offset in range(0, len(chunks), 64):
+                                cancelled(self.sync_cancel)
+                                batch = chunks[offset:offset+64]
+                                vectors = self.embedder().passage_embed([c[5] for c in batch], batch_size=16)
                                 table.add([{"chunk_id": c[0], "doc_id": doc_id, "vector": v.tolist()}
-                                           for c, v in zip(chunks, vectors)])
+                                           for c, v in zip(batch, vectors)])
                         snapshot = self.snapshot_file(path, sha)
                         if digest(path) != sha:
                             raise RuntimeError("File changed during indexing; retry after copy finishes")
@@ -357,9 +368,11 @@ class Library(StorageMixin):
                             (doc_id, sha, snapshot, json.dumps(meta), len(pages), now()))
                         self.db.executemany("INSERT INTO pages VALUES(?,?,?,?,?,?,?,?)", pages)
                         self.db.executemany("INSERT INTO chunks VALUES(?,?,?,?,?,?)", chunks)
-                        self.db.executemany("INSERT INTO chunks_fts VALUES(?,?)", [(c[0], " ".join(tokens(c[5]))) for c in chunks])
+                        self.db.executemany("INSERT INTO chunks_fts VALUES(?,?)", ((c[0], " ".join(tokens(c[5]))) for c in chunks))
                         action = "indexed"
-                    self.db.execute("INSERT OR REPLACE INTO sources VALUES(?,?,?,?,?)", (rel, doc_id, "ready", None, now()))
+                    current_meta = json.loads(self.db.execute('SELECT metadata FROM documents WHERE doc_id=?', (doc_id,)).fetchone()[0])
+                    note = '；'.join(current_meta.get('extraction_warnings', [])) if current_meta.get('partial') else None
+                    self.db.execute("INSERT OR REPLACE INTO sources VALUES(?,?,?,?,?)", (rel, doc_id, "ready", note, now()))
                     self.db.commit()
                     results.append({"file": rel, "doc_id": doc_id, "action": action})
                 except InterruptedError:
@@ -380,7 +393,7 @@ class Library(StorageMixin):
         with self.lock:
             sources = [dict(x) for x in self.db.execute("SELECT * FROM sources ORDER BY path")]
             docs = self.active_docs()
-            return {"software_license": "AGPL-3.0-only", "source_code_url": "https://github.com/yzc021101/Research-Library/tree/v0.6.7", "root": str(ROOT), "inbox": str(INBOX), "active_documents": len(docs),
+            return {"software_license": "AGPL-3.0-only", "source_code_url": "https://github.com/yzc021101/Research-Library/tree/v0.6.8", "root": str(ROOT), "inbox": str(INBOX), "active_documents": len(docs),
                     "supported_formats": sorted(SUPPORTED),
                     "search_suggestions": search_suggestions(docs.values()),
                     "stored_versions": self.db.execute("SELECT count(*) FROM documents").fetchone()[0],

@@ -7,7 +7,7 @@ public sealed partial class MainWindow {
  StackPanel? updatePanel;string updateFingerprint="";bool updateWorking;
  JsonObject updateState=new();
  readonly DispatcherTimer updateTimer=new(){Interval=TimeSpan.FromMinutes(30)};
- string UpdateVersion { get { try{return JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,"distribution.json")))?["version"]?.ToString()??"0.6.7";}catch{return "0.6.7";} } }
+ string UpdateVersion { get { try{return JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,"distribution.json")))?["version"]?.ToString()??"0.6.8";}catch{return "0.6.8";} } }
  void ReadUpdate(){try{using var stream=new FileStream(Path.Combine(Engine.Root,"updates","state.json"),FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);updateState=JsonNode.Parse(stream)!.AsObject();}catch{}}
  async Task<bool> RunUpdate(string action,bool automatic=false){
   if(updateWorking)return false;updateWorking=true;updateFingerprint="";UpdateSoftware();

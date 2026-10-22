@@ -6,6 +6,7 @@ struct Preferences: Codable, Equatable {
     var sourceFolders: [String] = []
     var topK = 8
     var searchMode = "hybrid"
+    var largeFileMode = false
     var autoScan = true
     var scanInterval = 30
     var startServiceOnLaunch = true
@@ -16,6 +17,7 @@ struct Preferences: Codable, Equatable {
     var cacheRetentionDays = 30
     enum CodingKeys: String, CodingKey {
         case sourceFolders = "source_folders", topK = "top_k", searchMode = "search_mode"
+        case largeFileMode = "large_file_mode"
         case autoScan = "auto_scan", scanInterval = "scan_interval"
         case automaticUpdates = "automatic_updates"
         case keepSnapshots = "keep_snapshots", cacheRetentionDays = "cache_retention_days"
@@ -27,6 +29,7 @@ struct Preferences: Codable, Equatable {
         sourceFolders = try c.decodeIfPresent([String].self, forKey: .sourceFolders) ?? []
         topK = try c.decodeIfPresent(Int.self, forKey: .topK) ?? 8
         searchMode = try c.decodeIfPresent(String.self, forKey: .searchMode) ?? "hybrid"
+        largeFileMode = try c.decodeIfPresent(Bool.self, forKey: .largeFileMode) ?? false
         autoScan = try c.decodeIfPresent(Bool.self, forKey: .autoScan) ?? true
         scanInterval = try c.decodeIfPresent(Int.self, forKey: .scanInterval) ?? 30
         startServiceOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .startServiceOnLaunch) ?? true
@@ -565,7 +568,7 @@ struct MainView: View {
                                         .lineLimit(2).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                                         .help(file["path"] as? String ?? "")
                                 }
-                                if failed, let error = file["error"] as? String, !error.isEmpty {
+                                if let error = file["error"] as? String, !error.isEmpty {
                                     Text(error).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                                 }
                             }
@@ -738,12 +741,13 @@ struct SettingsView: View {
                 modelControls
             case "data":
                 Section {
+                    Toggle("大文件模式", isOn: $m.preferences.largeFileMode)
                     Toggle("自动检测文件变化", isOn: $m.preferences.autoScan)
                     Picker("检查间隔", selection: $m.preferences.scanInterval) {
                         Text("15 秒").tag(15); Text("30 秒").tag(30); Text("1 分钟").tag(60)
                         Text("5 分钟").tag(300); Text("10 分钟").tag(600)
                     }.disabled(!m.preferences.autoScan)
-                } header: { Text("资料同步") } footer: { Text("服务运行时检查来源文件夹，处理新增或修改的报告、文本、演示文稿和表格。") }
+                } header: { Text("资料同步") } footer: { Text("服务运行时检查来源文件夹。默认读取最多 200 万个有效单元格；大文件模式提高到 500 万格，处理时间和索引空间也会增加。部分入库的文件将在切换模式后重新读取。") }
                 Section {
                     LabeledContent("来源文件夹") { Text(m.preferences.sourceFolders.count, format: .number) }
                     HStack {

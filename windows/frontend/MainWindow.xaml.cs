@@ -207,13 +207,16 @@ public sealed partial class MainWindow : Window {
   Heading("检索");
   var top=new NumberBox{Value=double.Parse(S(settings,"top_k","8")),Minimum=1,Maximum=20,SmallChange=1,SpinButtonPlacementMode=NumberBoxSpinButtonPlacementMode.Compact,Width=180};
   var mode=new ComboBox{ItemsSource=new[]{"混合检索","关键词检索","语义检索"},SelectedItem=ModeName(S(settings,"search_mode","hybrid")),Width=180};
+  var largeFiles=new ToggleSwitch{MinWidth=0,IsOn=settings["large_file_mode"]?.GetValue<bool>()??false,OnContent="开",OffContent="关"};
+  Identify(largeFiles,"LargeFileMode","大文件模式");
   var scan=new ToggleSwitch{MinWidth=0,IsOn=settings["auto_scan"]?.GetValue<bool>()??true,OnContent="开",OffContent="关"};
   var interval=new NumberBox{Value=double.Parse(S(settings,"scan_interval","30")),Minimum=15,Maximum=600,Width=180,SpinButtonPlacementMode=NumberBoxSpinButtonPlacementMode.Compact};
   var autostart=new ToggleSwitch{MinWidth=0,IsOn=settings["start_service_on_launch"]?.GetValue<bool>()??true,OnContent="开",OffContent="关"};
   Identify(top,"TopK","返回片段数 Top K");Identify(mode,"SearchMode","检索方式");Identify(scan,"AutoScan","自动检测文件变化");Identify(interval,"ScanInterval","检查间隔 秒");Identify(autostart,"StartService","打开应用时启动服务");
   Body.Children.Add(Card(Stack(Row(Text("返回片段数（Top K）",16),top),Row(Text("检索方式",16),mode))));
-  Heading("资料同步");Body.Children.Add(Card(Stack(Row(Text("自动检测文件变化",16),scan),Row(Text("检查间隔（秒）",16),interval),Row(Text("打开应用时启动服务",16),autostart))));
-  Body.Children.Add(Button("保存设置",async()=>{if(double.IsNaN(top.Value)||top.Value%1!=0||double.IsNaN(interval.Value)||interval.Value%1!=0)throw new Exception("请输入范围内的整数。");await Save(new{top_k=(int)top.Value,search_mode=mode.SelectedIndex switch{1=>"keyword",2=>"semantic",_=>"hybrid"},auto_scan=scan.IsOn,scan_interval=(int)interval.Value,start_service_on_launch=autostart.IsOn});Notify("设置已保存",severity:InfoBarSeverity.Success);},true));
+  Heading("资料同步");Body.Children.Add(Card(Stack(Row(Text("大文件模式",16),largeFiles),Row(Text("自动检测文件变化",16),scan),Row(Text("检查间隔（秒）",16),interval),Row(Text("打开应用时启动服务",16),autostart))));
+  Body.Children.Add(Button("保存设置",async()=>{if(double.IsNaN(top.Value)||top.Value%1!=0||double.IsNaN(interval.Value)||interval.Value%1!=0)throw new Exception("请输入范围内的整数。");await Save(new{top_k=(int)top.Value,search_mode=mode.SelectedIndex switch{1=>"keyword",2=>"semantic",_=>"hybrid"},large_file_mode=largeFiles.IsOn,auto_scan=scan.IsOn,scan_interval=(int)interval.Value,start_service_on_launch=autostart.IsOn});Notify("设置已保存",severity:InfoBarSeverity.Success);},true));
+  Note("默认读取最多 200 万个有效单元格；大文件模式提高到 500 万格，处理时间和索引空间也会增加。部分入库文件会在切换模式后重新读取。");
   Note("Top K 与检索方式同时用于 App 和 MCP；单次 MCP 调用可以另行指定。");
   Heading("外观");var theme=new ComboBox{ItemsSource=new[]{"跟随系统","浅色","深色"},SelectedItem=ui["theme"]?.ToString()??"跟随系统",Width=180};theme.SelectionChanged+=(_,_)=>{string t=theme.SelectedItem.ToString()!;ApplyTheme(t);ui["theme"]=t;PersistUI();};Body.Children.Add(Card(Row(Text("应用主题",16),theme)));
   Heading("向量模型");Note("当前模型按需载入。切换模型会重建索引；其他模型仅在你确认后下载。");

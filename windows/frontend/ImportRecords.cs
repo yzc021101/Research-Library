@@ -39,7 +39,8 @@ public sealed partial class MainWindow {
     string path=S(record,"path");
     var title=Text(Path.GetFileName(path),15);ToolTipService.SetToolTip(title,path);
     var details=Stack(title);
-    if(failed){string error=S(record,"error");if(error.Length>0)details.Children.Add(Text(error,14,true));}
+    string error=S(record,"error");
+    if(error.Length>0)details.Children.Add(Text(error,14,true));
     else details.Children.Add(Text(path,13,true));
     body.Children.Add(Card(Row(details,Button("打开原文件",()=>OpenOriginal(path)))));
    }
