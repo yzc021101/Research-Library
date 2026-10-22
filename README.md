@@ -13,7 +13,7 @@
 > [!IMPORTANT]
 > **自动更新提示**
 >
-> 目前自动更新功能还不够稳定，版本检查和安装包下载依赖 GitHub。中国大陆用户可能需要翻墙（使用可访问 GitHub 的代理网络），下载速度也可能较慢。
+> 目前自动更新功能还不够稳定，版本检查和安装包下载依赖 GitHub。中国大陆用户可能需要科学上网（使用可访问 GitHub 的代理网络），下载速度也可能较慢。
 >
 > 如果检查更新或下载长时间卡住，可以直接从 [GitHub 下载页面](https://github.com/yzc021101/Research-Library/releases/latest) 获取安装包，退出 App 后进行手动更新。Mac 使用 DMG 替换应用，Windows 运行 setup.exe 安装到原位置；请保留原有资料库目录。
 
