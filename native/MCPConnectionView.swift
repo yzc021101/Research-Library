@@ -38,9 +38,7 @@ struct MCPClientSections: View {
                 }.buttonStyle(.borderedProminent)
                 Button("复制启动路径") { copy(MCPConfiguration.command(root: root), label: "启动路径已复制") }
             }
-        } header: { Text(client.formatLabel) } footer: {
-            FormNote("保留已有服务条目。这里只复制配置，不会自动修改客户端设置。")
-        }
+        } header: { Text(client.formatLabel) }
         Section {
             HStack {
                 Text("在客户端验证连接")
@@ -56,7 +54,7 @@ struct MCPClientSections: View {
             }
         } header: { Text("验证与帮助") } footer: {
             VStack(alignment: .leading, spacing: 6) {
-                FormNote("完成客户端配置后，把验证提示词发给该客户端；本 App 的连接检查不能代替客户端内的验证。")
+                FormNote("完成客户端配置后，把验证提示词发给该客户端；需自行检查目标客户端是否正常调用。")
                 if openOnboarding != nil {
                     FormNote("独立版运行环境包含在 App 内；资料、模型与可选组件保存在资料库目录，更新 App 不会覆盖资料。")
                 }
@@ -73,6 +71,7 @@ struct MCPClientSections: View {
 
 struct MCPStatusSection: View {
     @ObservedObject var m: LibraryModel
+    var showClientReminder = false
     @State private var checking = false
     @State private var checkResult: String?
     @State private var checkOK = false
@@ -92,7 +91,7 @@ struct MCPStatusSection: View {
         } header: { Text("连接信息") } footer: {
             VStack(alignment: .leading, spacing: 6) {
                 FormNote("本地连接无需填写 URL 或 MCP Key。使用 MCP 时保持 App 的服务运行。")
-                FormNote("这里检查真实握手、工具列表及资料库状态，不代表已在客户端添加。")
+                if showClientReminder { FormNote("需自行检查目标客户端是否正常调用。") }
             }
         }
     }

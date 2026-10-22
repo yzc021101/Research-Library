@@ -12,6 +12,22 @@ for name in ('fastembed','docx','pptx','striprtf'):
     datas += collect_data_files(name)
 a = Analysis([str(source/'runtime_entry.py')], pathex=[str(source)], datas=datas,
     hiddenimports=hidden, excludes=['matplotlib','IPython','jupyter','pytest','tkinter','torch','tensorflow','sympy'], noarchive=False)
+# Standalone Python records its installation prefix in build-time configuration.
+# Normalize that metadata in the archive so a developer's home path is not shipped.
+# This does not change the interpreter, TLS settings, or runtime certificate checks.
+import sys
+from PyInstaller.config import CONF
+for index, (module, filename, kind) in enumerate(a.pure):
+    if module.startswith('_sysconfigdata') and filename:
+        content = Path(filename).read_text()
+        for prefix in sorted({sys.base_prefix, sys.prefix, str(Path.home())}, key=len, reverse=True):
+            content = content.replace(prefix, '/opt/python').replace(prefix.replace('\\', '\\\\'), '/opt/python')
+        clean = Path(workpath)/'public-sysconfig'/(module+'.py')
+        clean.parent.mkdir(parents=True, exist_ok=True)
+        clean.write_text(content)
+        a.pure[index] = (module, str(clean), kind)
+        cache = CONF['code_cache'].get(id(a.pure))
+        if cache is not None: cache.pop(module, None)
 pyz = PYZ(a.pure)
 # Microsoft CRT is installed from Microsoft on the end user's machine.
 # Wheels sometimes import hashed CRT filenames; record aliases, not CRT binaries.

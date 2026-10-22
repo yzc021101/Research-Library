@@ -1,6 +1,6 @@
 # Corresponding source and build provenance
 
-For release v0.6.5, the application source and build scripts are at https://github.com/yzc021101/Research-Library/tree/v0.6.5 . The AGPL license and frontend additional permission are at the repository root. Application binaries are built from this tag; no source modifications were made to PyMuPDF/MuPDF.
+For release v0.6.6, the application source and build scripts are at https://github.com/yzc021101/Research-Library/tree/v0.6.6 . The AGPL license and frontend additional permission are at the repository root. Application binaries are built from this tag; no source modifications were made to PyMuPDF/MuPDF.
 
 Third-party components are unchanged from v0.6.3. Download their matching source assets at https://github.com/yzc021101/Research-Library/releases/tag/v0.6.3 :
 
@@ -18,4 +18,4 @@ LibreOffice 25.8.6.2 corresponding source (upstream archive server, free of char
 
 These sources contain upstream build instructions and external dependency recipes. The optional package only relocates the unmodified official application; licenses, source notices and dictionaries are retained. Mac OCR library load paths are relocated for local use; its SOURCES.txt and licenses/ record upstream versions. No source changes. Build recipes are included under packaging/.
 
-CPython source: https://www.python.org/ftp/python/3.12.14/Python-3.12.14.tar.xz . Other Python package versions are in python-macos/dependencies.json and python-windows/dependencies.json; matching official source distributions are available at https://pypi.org/ . Microsoft runtime license texts include their applicable third-party source notices. If an upstream source URL becomes unavailable, report it in the repository so the source can be restored.
+CPython source: macOS uses https://www.python.org/ftp/python/3.12.13/Python-3.12.13.tar.xz ; Windows uses https://www.python.org/ftp/python/3.12.14/Python-3.12.14.tar.xz . The macOS interpreter is taken from Astral python-build-standalone. packaging/runtime.spec normalizes installation paths in the archived build-time sysconfig metadata to /opt/python; interpreter behavior and TLS certificate checks are unchanged. Other Python package versions are in python-macos/dependencies.json and python-windows/dependencies.json; matching official source distributions are available at https://pypi.org/ . Microsoft runtime license texts include their applicable third-party source notices. If an upstream source URL becomes unavailable, report it in the repository so the source can be restored.

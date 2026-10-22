@@ -2,7 +2,7 @@
  <Window.SystemBackdrop><MicaBackdrop /></Window.SystemBackdrop>
  <Grid x:Name="Shell">
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-  <TitleBar x:Name="AppTitleBar" Title="投研纵览" Subtitle="本地研究资料库"><TitleBar.IconSource><ImageIconSource ImageSource="/Assets/AppIcon.png"/></TitleBar.IconSource></TitleBar>
+  <TitleBar x:Name="AppTitleBar" Title="投研纵览"><TitleBar.IconSource><ImageIconSource ImageSource="/Assets/AppIcon.png"/></TitleBar.IconSource></TitleBar>
   <NavigationView Grid.Row="1" x:Name="Navigation" PaneDisplayMode="Auto" IsPaneOpen="True" ExpandedModeThresholdWidth="900" OpenPaneLength="224" IsBackButtonVisible="Collapsed" IsSettingsVisible="True" SelectionChanged="Navigate">
    <NavigationView.MenuItems>
     <NavigationViewItem Content="概览" Tag="home" Icon="Home"/>

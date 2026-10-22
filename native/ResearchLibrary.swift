@@ -331,6 +331,8 @@ struct ModelOption: Identifiable, Decodable {
 struct MainView: View {
     @ObservedObject var m: LibraryModel
     @State private var columns: NavigationSplitViewVisibility = .all
+    @State private var failedRecordsExpanded = true
+    @State private var readyRecordsExpanded = false
     var title: String { ["overview":"概览", "sources":"资料来源", "search":"检索资料", "mcp":"MCP 接入"][m.selected] ?? "资料库" }
 
     var body: some View {
@@ -372,7 +374,9 @@ struct MainView: View {
             .toolbar {
                 ToolbarItemGroup {
                     if m.busy {
-                        ProgressView().controlSize(.small).help(m.syncProgress)
+                        ProgressView().controlSize(.small)
+                            .frame(width: 32, height: 28).padding(.horizontal, 4)
+                            .accessibilityLabel("正在同步资料").help(m.syncProgress)
                         Button("取消同步", systemImage: "xmark.circle") { Task { await m.cancelSync() } }
                     }
                     Button("添加文件夹", systemImage: "folder.badge.plus") { m.addFolder() }
@@ -537,21 +541,47 @@ struct MainView: View {
             if !m.visibleFiles.isEmpty {
                 card {
                     Text("入库记录").font(.headline)
-                    ForEach(Array(m.visibleFiles.enumerated()), id: \.offset) { index, file in
-                        if index > 0 { Divider() }
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack {
-                                Label(URL(fileURLWithPath: file["path"] as? String ?? "").lastPathComponent, systemImage: "doc.text").lineLimit(1)
-                                Spacer()
-                                Text(file["state"] as? String == "ready" ? "已入库" : "失败")
-                                    .font(.callout).foregroundStyle(.secondary)
-                            }
-                            if let error = file["error"] as? String { Text(error).font(.callout).foregroundStyle(.secondary).textSelection(.enabled) }
-                        }
-                    }
+                    importGroup("导入失败", files: m.visibleFiles.filter { $0["state"] as? String == "failed" }, expanded: $failedRecordsExpanded, failed: true)
+                    Divider()
+                    importGroup("已入库", files: m.visibleFiles.filter { $0["state"] as? String == "ready" }, expanded: $readyRecordsExpanded, failed: false)
                 }
             }
         }
+    }
+
+    func importGroup(_ title: String, files: [[String: Any]], expanded: Binding<Bool>, failed: Bool) -> some View {
+        DisclosureGroup(isExpanded: expanded) {
+            if expanded.wrappedValue {
+                if files.isEmpty {
+                    Text(failed ? "没有失败的导入记录" : "暂无已入库文档").font(.callout).foregroundStyle(.secondary).padding(.top, 8)
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(files, id: \.pathIdentity) { file in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .top) {
+                                    Image(systemName: failed ? "exclamationmark.circle.fill" : "doc.text")
+                                        .foregroundStyle(failed ? Color.red : Color.secondary)
+                                    Text(URL(fileURLWithPath: file["path"] as? String ?? "").lastPathComponent)
+                                        .lineLimit(2).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                                        .help(file["path"] as? String ?? "")
+                                }
+                                if failed, let error = file["error"] as? String, !error.isEmpty {
+                                    Text(error).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                                }
+                            }
+                            Divider()
+                        }
+                    }.padding(.top, 10)
+                }
+            }
+        } label: {
+            HStack {
+                Label(title, systemImage: failed ? "exclamationmark.circle.fill" : "checkmark.circle")
+                    .foregroundStyle(failed && !files.isEmpty ? Color.red : Color.primary)
+                Spacer()
+                Text("\(files.count) 份").foregroundStyle(.secondary)
+            }.font(.headline).padding(.vertical, 4)
+        }.accessibilityIdentifier(failed ? "FailedImports" : "ReadyImports")
     }
 
     var search: some View {
@@ -1026,4 +1056,8 @@ struct SettingsView: View {
         app.run()
         _ = delegate
     }
+}
+
+private extension Dictionary where Key == String, Value == Any {
+    var pathIdentity: String { self["path"] as? String ?? "" }
 }

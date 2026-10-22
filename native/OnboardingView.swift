@@ -45,7 +45,7 @@ struct OnboardingView: View {
                 } else if step == 1 {
                     MCPClientSections(root: m.root)
                 } else {
-                    MCPStatusSection(m: m)
+                    MCPStatusSection(m: m, showClientReminder: true)
                     Section {
                         HStack {
                             Text("在客户端验证连接")
@@ -58,7 +58,13 @@ struct OnboardingView: View {
                     } header: { Text("在客户端中验证") } footer: {
                         VStack(alignment: .leading, spacing: 8) {
                             FormNote("返回你使用的 AI 客户端，确认服务器已经启用，然后发送以下提示词：")
-                            FormNote(MCPClient.verificationPrompt)
+                            Text(MCPClient.verificationPrompt)
+                                .font(.system(.body, design: .monospaced)).foregroundStyle(.primary)
+                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(nsColor: .separatorColor)))
+                                .accessibilityIdentifier("VerificationPrompt")
                             FormNote("客户端能调用 library_status 后即可开始使用。文档数为 0 时，可以先添加资料来源。")
                             Text("日常使用").font(.headline).foregroundStyle(.primary).padding(.top, 18)
                             FormNote("关闭所有窗口后可继续留在菜单栏运行；从菜单栏重新打开窗口。需要释放资源时选择“停止服务”。")

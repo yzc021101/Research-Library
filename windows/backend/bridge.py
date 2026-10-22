@@ -1,5 +1,6 @@
 from paths import ROOT
 import json
+import logging
 import urllib.request
 import urllib.error
 
@@ -20,6 +21,7 @@ class BackendProxy:
                 raise RuntimeError("当前调用环境禁止连接本机服务；需要允许本机连接，这不表示资料库服务已停止。") from exc
             raise RuntimeError("本地资料库服务连接失败。请检查 App 的运行状态。") from exc
         except (OSError, ValueError, KeyError) as exc:
+            logging.exception("Local backend request failed")
             raise RuntimeError("本地资料库服务未运行。请打开 投研纵览 App，在菜单栏点击‘启动服务’。") from exc
 
     def status(self): return self.request("/status")

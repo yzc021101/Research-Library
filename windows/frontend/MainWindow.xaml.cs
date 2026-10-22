@@ -67,7 +67,7 @@ public sealed partial class MainWindow : Window {
  Button Button(string title,Func<Task> action,bool accent=false){var b=new Button{Content=title,HorizontalAlignment=HorizontalAlignment.Right};if(accent)b.Style=(Style)Application.Current.Resources["AccentButtonStyle"];b.Click+=async(_,_)=>await Guard(action);return b;}
  void Heading(string title,string? detail=null){Body.Children.Add(Text(title,20));if(detail!=null)Body.Children.Add(Text(detail,14,true));}
  void Note(string text)=>Body.Children.Add(Text(text,14,true));
- async Task Refresh(bool redraw){if(refreshing)return;string previous=status["sources"]?.ToJsonString()??"";refreshing=true;try{using var timeout=new CancellationTokenSource(2500);status=await engine.Request("/status",cancellationToken:timeout.Token);settings=await engine.Request("/settings",cancellationToken:timeout.Token);ServiceLabel.Text=status["busy"]?.GetValue<bool>()==true?"正在同步资料…":"服务运行中";CountLabel.Text=$"{S(status,"active_documents","0")} 份文档 · 本机存储";ServiceButton.Content="停止服务";}catch{status=new();settings=Engine.DiskSettings();ServiceLabel.Text="服务已停止";CountLabel.Text="打开服务后可检索资料";ServiceButton.Content="启动服务";}finally{refreshing=false;}UpdateSyncProgress();tray?.Update(ServiceLabel.Text);if(modelPanel!=null)UpdateModels();if(componentPanel!=null)UpdateComponents();if(updatePanel!=null)UpdateSoftware();if(redraw||(page=="home"&&previous!=(status["sources"]?.ToJsonString()??"")))await Render();}
+ async Task Refresh(bool redraw){if(refreshing)return;string previous=status["sources"]?.ToJsonString()??"";refreshing=true;try{using var timeout=new CancellationTokenSource(2500);status=await engine.Request("/status",cancellationToken:timeout.Token);settings=await engine.Request("/settings",cancellationToken:timeout.Token);ServiceLabel.Text=status["busy"]?.GetValue<bool>()==true?"正在同步资料…":"服务运行中";CountLabel.Text=$"{S(status,"active_documents","0")} 份文档 · 本机存储";ServiceButton.Content="停止服务";}catch{status=new();settings=Engine.DiskSettings();ServiceLabel.Text="服务已停止";CountLabel.Text="打开服务后可检索资料";ServiceButton.Content="启动服务";}finally{refreshing=false;}UpdateSyncProgress();tray?.Update(ServiceLabel.Text);if(modelPanel!=null)UpdateModels();if(componentPanel!=null)UpdateComponents();if(updatePanel!=null)UpdateSoftware();if(importPanel!=null)UpdateImportRecords();if(redraw||(page=="home"&&previous!=(status["sources"]?.ToJsonString()??"")))await Render();}
  void UpdateSyncProgress(){
   bool active=status["busy"]?.GetValue<bool>()==true;
   SyncProgressRow.Visibility=active?Visibility.Visible:Visibility.Collapsed;
@@ -80,7 +80,7 @@ public sealed partial class MainWindow : Window {
  async void Navigate(NavigationView sender,NavigationViewSelectionChangedEventArgs args){page=args.IsSettingsSelected?"settings":(args.SelectedItemContainer?.Tag?.ToString()??"home");if(loaded&&!busy)await Guard(Render);}
  async Task Go(string target){if(target=="settings")Navigation.SelectedItem=Navigation.SettingsItem;else Navigation.SelectedItem=Navigation.MenuItems.OfType<NavigationViewItem>().First(x=>x.Tag?.ToString()==target);page=target;await Render();}
  static string PageName(string value)=>value switch{"sources"=>"资料来源","search"=>"检索资料","mcp"=>"MCP 接入","settings"=>"设置",_=>"概览"};
- async Task Render(){if(closing)return;modelPanel=null;componentPanel=null;updatePanel=null;Body.Children.Clear();Scroller.ChangeView(null,0,null);PageTitle.Text=PageName(page);
+ async Task Render(){if(closing)return;modelPanel=null;componentPanel=null;updatePanel=null;importPanel=null;Body.Children.Clear();Scroller.ChangeView(null,0,null);PageTitle.Text=PageName(page);
   switch(page){case "sources":Sources();break;case "search":Search();break;case "mcp":Mcp();break;case "settings":Settings();break;default:await Home();break;}}
  async void SyncClick(object sender,RoutedEventArgs e)=>await Guard(async()=>{await engine.Request("/sync",new{});Notify("已开始同步","完成后可在概览查看文档。",InfoBarSeverity.Success);await Refresh(true);});
  async void ServiceClick(object sender,RoutedEventArgs e)=>await Guard(async()=>{if(await engine.Running())await engine.Stop();else await engine.Start();await Refresh(true);});
@@ -92,14 +92,8 @@ public sealed partial class MainWindow : Window {
   var actions=new List<UIElement>();
   actions.Add(Card(Stack(Text("连接你的 AI 工具",18),Text("为 Codex、Claude Code 等生成 MCP 配置。",14,true),Button("MCP 接入",()=>Go("mcp")))));
   var source=Card(Stack(Text("管理资料来源",18),Text("添加文件夹，资料变动时自动同步。",14,true),Button("管理文件夹",()=>Go("sources"))));actions.Add(source);Body.Children.Add(AdaptiveLayout.Columns(actions,300));
-  Heading("资料库中的文档");
-  if((settings["source_folders"]?.AsArray()??new()).Any(x=>x!.ToString().Contains("tests\\fixtures")))Note("当前包含合成测试资料，仅供验证功能，不能作为研究依据。");
   if(status.Count==0){Note("服务已停止。启动服务后查看文档。");return;}
-  var docs=(await engine.Tool("search_documents"))["documents"]!.AsArray();
-  if(docs.Count==0){Body.Children.Add(Card(Stack(Text("还没有资料",18),Text("先添加一个包含报告、文档或表格的文件夹。",14,true),Button("添加资料文件夹…",AddFolder))));return;}
-  foreach(var d in docs){var doc=d!;Body.Children.Add(Card(Row(Stack(Text(S(doc,"title"),17),Text(Metadata(doc)+$" · {S(doc,"file_format","pdf").ToUpperInvariant()} · {S(doc,"unit_count",S(doc,"page_count"))} 个阅读单元",13,true)),Button("查看原文",()=>OpenOriginal(S(doc,"original_path"))))));}
-  var failures=status["sources"]?.AsArray().Where(x=>S(x,"state")=="failed"&&IsCurrentSource(S(x,"path"))).ToArray()??[];
-  foreach(var f in failures)Body.Children.Add(Card(Stack(Text("导入未完成",16),Text(S(f,"path"),13,true),Text(S(f,"error"),13,true))));
+  ImportRecords();
  }
  bool IsCurrentSource(string path){
   return (settings["source_folders"]?.AsArray()??new()).Any(folder=>{
@@ -114,6 +108,7 @@ public sealed partial class MainWindow : Window {
   foreach(var f in folders){string path=f!.ToString();Body.Children.Add(Card(Row(Stack(Text(Path.GetFileName(path.TrimEnd('\\')),18),Text(path,14,true),Text(Directory.Exists(path)?"文件夹可用":"文件夹暂不可用",13,true)),Stack(Button("打开文件夹",()=>OpenFolder(path)),Button("移除",async()=>{await Save(new{source_folders=folders.Select(x=>x!.ToString()).Where(x=>x!=path).ToArray()});await Refresh(true);})))));}
   if(folders.Count==0)Body.Children.Add(Card(Stack(Text("添加你的第一个资料来源",19),Text("自动扫描子文件夹；新增、修改和移除的文件会同步更新。旧版 DOC/PPT/XLS 自动在后台转换，原文件保持不变。",14,true))));
   Body.Children.Add(Button("添加资料文件夹…",AddFolder,true));Note("移除来源后，该来源下的文档将退出检索，不会删除原文件。");
+  ImportRecords();
  }
  async Task AddFolder(){var picker=new FolderPicker();picker.FileTypeFilter.Add("*");InitializeWithWindow.Initialize(picker,WindowNative.GetWindowHandle(this));var folder=await picker.PickSingleFolderAsync();if(folder==null)return;
   var folders=(settings["source_folders"]?.AsArray()??new()).Select(x=>x!.ToString()).ToList();if(!folders.Contains(folder.Path,StringComparer.OrdinalIgnoreCase))folders.Add(folder.Path);
@@ -185,7 +180,7 @@ public sealed partial class MainWindow : Window {
   Body.Children.Add(Card(Row(Stack(Text("检查本地服务",16),Text("确认资料库服务可以响应请求。",14,true)),Button("检查连接",async()=>{var s=await engine.Tool("library_status");Notify("本地服务连接正常",$"{S(s,"active_documents")} 份文档。请在 AI 客户端中继续验证 MCP。",InfoBarSeverity.Success);} ))));
   Body.Children.Add(Card(Row(Stack(Text("在 AI 客户端验证",16),Text("复制提示词，发送到已经配置的客户端。",14,true)),Button("复制验证提示词",()=>Copy(MCPConfiguration.Verify)))));
   Body.Children.Add(Card(Row(Text("重新查看首次接入步骤",16),Button("打开引导",Onboarding))));
-  Note("本地检查不能代替客户端内的 MCP 验证。使用期间请保持本应用和资料库服务运行。");
+  Note("需自行检查目标客户端是否正常调用。使用期间请保持本应用和资料库服务运行。");
  }
  Task Copy(string value){var content=new DataPackage();content.SetText(value);Clipboard.SetContent(content);Clipboard.Flush();Notify("已复制",severity:InfoBarSeverity.Success);return Task.CompletedTask;}
  void Settings(){
@@ -297,7 +292,10 @@ public sealed partial class MainWindow : Window {
     panel.Children.Add(Text("先检查本地服务，再到你的 AI 客户端完成一次真实 MCP 调用。",15,true));
     panel.Children.Add(Action("检查本地连接",async()=>{await engine.Start();var result=await engine.Tool("library_status");feedback.Text=$"本地服务连接正常，当前 {S(result,"active_documents","0")} 份文档。";}));
     panel.Children.Add(Action("复制验证提示词",async()=>{await Copy(MCPConfiguration.Verify);feedback.Text="已复制。在 AI 客户端中发送此提示词，确认可以调用工具。";}));
-    panel.Children.Add(Text("本地检查不能代替客户端内的 MCP 验证。原文片段会进入 AI 客户端的对话上下文。",14,true));
+    panel.Children.Add(Text("需自行检查目标客户端是否正常调用。原文片段会进入 AI 客户端的对话上下文。",14,true));
+    panel.Children.Add(Text("在目标客户端中发送以下提示词：",14,true));
+    var prompt=new TextBox{Text=MCPConfiguration.Verify,IsReadOnly=true,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,FontFamily=new FontFamily("Cascadia Mono"),FontSize=14,MinHeight=110};
+    Identify(prompt,"VerificationPrompt","验证提示词");panel.Children.Add(prompt);
    }
    panel.Children.Add(feedback);scroll.ChangeView(null,0,null,true);
   }

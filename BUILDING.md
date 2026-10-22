@@ -4,7 +4,7 @@
 
 ## macOS ARM64
 
-需要 macOS 14+、Apple Command Line Tools（Swift 编译器、iconutil、codesign、hdiutil）及 CPython 3.12 ARM64。创建项目自己的虚拟环境并安装锁定依赖：
+需要 macOS 14+、Apple Command Line Tools（Swift 编译器、iconutil、codesign、hdiutil）及独立安装的标准 CPython 3.12 ARM64（本版本使用 3.12.13）。请使用 Python 或 python-build-standalone 的公开发行物，避免复用其他工具定制的解释器。创建项目自己的虚拟环境并安装锁定依赖：
 
 ```sh
 python3.12 -m venv .venv
