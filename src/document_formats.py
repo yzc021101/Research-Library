@@ -120,6 +120,18 @@ def word_units(path):
     warnings = ['Word 按正文顺序提取；页眉页脚、修订、文本框和图片可能不完整，引用使用正文块而非排版页码。']
     return units, props, warnings
 
+def _presentation_shape_order(shape):
+    # python-pptx resolves inherited placeholder coordinates when available.
+    # A placeholder without a matching layout/master shape can still contain
+    # text while all of its geometry is None. Keep such shapes after positioned
+    # shapes in their original XML order (Python's sort is stable), rather than
+    # inventing coordinates or dropping their content. Size is not needed here.
+    top, left = shape.top, shape.left
+    if top is None or left is None:
+        return (1, 0, 0)
+    return (0, top, left)
+
+
 def presentation_units(path):
     from pptx import Presentation
     from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -145,7 +157,7 @@ def presentation_units(path):
                 yield '[此图表未能提取数据，请打开原文件核对]', None
     for i, slide in enumerate(deck.slides, 1):
         values, tables, position = [], {}, 0
-        for shape in sorted(slide.shapes, key=lambda s: (s.top, s.left)):
+        for shape in sorted(slide.shapes, key=_presentation_shape_order):
             for text, row in shape_content(shape):
                 if row:
                     table_id = row.pop('table_id')

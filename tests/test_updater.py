@@ -15,6 +15,21 @@ class UpdaterTests(unittest.TestCase):
  def release(self,tag='v0.6.8'):
   u=self.u;n=u.asset_name()
   return {'tag_name':tag,'assets':[{'name':n,'state':'uploaded','browser_download_url':u.REPO+'/releases/download/'+tag+'/'+n,'digest':'sha256:'+'a'*64,'size':20}]}
+ def cached_release(self,tag='v0.6.9'):
+  u=self.u;data=self.release(tag);payload=tag.encode()*12
+  data['assets'][0].update(size=len(payload),digest='sha256:'+hashlib.sha256(payload).hexdigest())
+  item=u.release_asset(data);(u.HOME/item['name']).write_bytes(payload)
+  u.state(phase='ready',release=item,current='0.6.8',done=len(payload),total=len(payload),error='')
+  return data,item,payload
+ def transaction(self,release_version='0.6.8',result=True,identified=False):
+  u=self.u;target=Path(self.tmp.name)/'app';target.mkdir(exist_ok=True)
+  stage=target.parent/('.research-library-update-'+'a'*32);stage.mkdir(exist_ok=True)
+  backup=target.parent/('.research-library-previous-'+'b'*32);backup.mkdir(exist_ok=True)
+  journal={'target':str(target),'stage':str(stage),'backup':str(backup),'unpacked':str(stage/'app'),'version':release_version,'archive':str(u.HOME/u.asset_name())}
+  outcome={'ok':result}
+  if identified:journal['id']='c'*32;outcome['id']=journal['id']
+  u.write(u.HOME/'transaction.json',journal);u.write(u.HOME/'install-result.json',outcome)
+  return target,journal
  def test_download_progress_and_verification(self):
   u=self.u;payload=b'x'*(2*1024*1024+7);release=self.release();item=release['assets'][0]
   item['size']=len(payload);item['digest']='sha256:'+hashlib.sha256(payload).hexdigest()
@@ -91,5 +106,82 @@ class UpdaterTests(unittest.TestCase):
   self.assertEqual(replace.call_count,20)
   self.assertEqual(self.u.read(self.u.STATE),{'phase':'old'})
   self.assertFalse(list(self.u.HOME.glob('*.tmp')))
+ def test_finished_legacy_install_cannot_erase_newer_download_on_restart(self):
+  u=self.u;_,item,payload=self.cached_release();target,journal=self.transaction()
+  before=u.read(u.STATE)
+  with patch.object(u,'validate_app',return_value='0.6.8'),patch.object(u,'fetch_release',side_effect=AssertionError('Restart must work offline')):
+   u.finish(target)
+   self.assertEqual(u.read(u.STATE),before)
+   u.finish(target) # A second fresh launch cannot replay the old completion.
+  self.assertEqual((u.HOME/item['name']).read_bytes(),payload)
+  self.assertFalse((u.HOME/'transaction.json').exists());self.assertFalse((u.HOME/'install-result.json').exists())
+  self.assertFalse(Path(journal['backup']).exists());self.assertFalse(Path(journal['stage']).exists())
+ def test_failed_old_install_cannot_erase_newer_download(self):
+  u=self.u;_,item,payload=self.cached_release();target,_=self.transaction(result=False)
+  before=u.read(u.STATE)
+  with patch.object(u,'validate_app',return_value='0.6.7'):u.finish(target)
+  self.assertEqual(u.read(u.STATE),before);self.assertEqual((u.HOME/item['name']).read_bytes(),payload)
+ def test_completed_install_consumed_once_and_cleans_only_matching_archive(self):
+  u=self.u;_,item,_=self.cached_release('v0.6.8');target,j=self.transaction(identified=True)
+  j['release']=item;u.write(u.HOME/'transaction.json',j)
+  with patch.object(u,'validate_app',return_value='0.6.8'):u.finish(target)
+  self.assertEqual(u.read(u.STATE)['phase'],'current');self.assertFalse((u.HOME/item['name']).exists())
+  self.cached_release('v0.6.9');before=u.read(u.STATE);u.finish(target)
+  self.assertEqual(u.read(u.STATE),before);self.assertTrue((u.HOME/item['name']).exists())
+ def test_installed_version_never_moves_back_to_stale_journal_version(self):
+  u=self.u;target,_=self.transaction()
+  with patch.object(u,'validate_app',return_value='0.6.10'):u.finish(target)
+  self.assertEqual(u.read(u.STATE)['current'],'0.6.10')
+ def test_failed_install_keeps_verified_download_ready_for_retry(self):
+  u=self.u;_,item,payload=self.cached_release('v0.6.8');target,j=self.transaction(result=False,identified=True)
+  j['release']=item;u.write(u.HOME/'transaction.json',j);u.state(phase='prepared',transaction_id=j['id'])
+  with patch.object(u,'validate_app',return_value='0.6.7'):u.finish(target)
+  state=u.read(u.STATE)
+  self.assertEqual(state['phase'],'ready');self.assertEqual(state['current'],'0.6.7');self.assertTrue(state['error'])
+  self.assertEqual((u.HOME/item['name']).read_bytes(),payload);self.assertFalse((u.HOME/'transaction.json').exists())
+ def test_failed_install_does_not_offer_corrupt_archive(self):
+  u=self.u;_,item,_=self.cached_release('v0.6.8');target,_=self.transaction(result=False)
+  (u.HOME/item['name']).write_bytes(b'bad')
+  with patch.object(u,'validate_app',return_value='0.6.7'):u.finish(target)
+  self.assertEqual(u.read(u.STATE)['phase'],'error')
+ def test_pending_helper_and_mismatched_result_are_not_consumed(self):
+  u=self.u;self.cached_release();target,j=self.transaction(identified=True);before=u.read(u.STATE)
+  for result in ({},{'ok':True,'id':'d'*32},{'ok':True}):
+   u.write(u.HOME/'install-result.json',result)
+   with patch.object(u,'validate_app',side_effect=AssertionError('No matching completed transaction')):u.finish(target)
+   self.assertEqual(u.read(u.STATE),before);self.assertTrue((u.HOME/'transaction.json').exists());self.assertTrue(Path(j['stage']).exists())
+ def test_failed_result_for_another_app_does_not_change_state(self):
+  u=self.u;self.cached_release();target,_=self.transaction(result=False);before=u.read(u.STATE)
+  u.finish(target.parent/'another-app');self.assertEqual(u.read(u.STATE),before)
+ def test_result_success_with_old_app_keeps_recovery_files(self):
+  u=self.u;self.cached_release();target,j=self.transaction()
+  with patch.object(u,'validate_app',return_value='0.6.7'):
+   with self.assertRaises(ValueError):u.finish(target)
+  self.assertTrue(Path(j['stage']).exists());self.assertTrue((u.HOME/'transaction.json').exists())
+ def test_check_reuses_verified_package_after_note_edit_or_interrupted_check(self):
+  u=self.u;data,item,_=self.cached_release();data['body']='Updated release description'
+  u.state(phase='checking')
+  with patch.object(u,'fetch_release',return_value=data):result=u.check('0.6.8')
+  self.assertEqual(result['phase'],'ready');self.assertEqual(result['release']['notes'],data['body'])
+  (u.HOME/item['name']).write_bytes(b'corrupt')
+  with patch.object(u,'fetch_release',return_value=data):result=u.check('0.6.8')
+  self.assertEqual(result['phase'],'available')
+ def test_completed_download_without_journal_survives_offline_restart(self):
+  u=self.u;_,item,payload=self.cached_release();before=u.read(u.STATE)
+  u.write(u.HOME/'install-result.json',{'ok':True}) # Orphaned legacy result is inert.
+  with patch.object(u,'fetch_release',side_effect=AssertionError('Offline')),patch.object(u,'validate_app',side_effect=AssertionError('No transaction')):
+   u.finish(Path(self.tmp.name)/'app')
+  self.assertEqual(u.read(u.STATE),before);self.assertEqual((u.HOME/item['name']).read_bytes(),payload)
+ def test_offline_automatic_check_after_restart_keeps_completed_download(self):
+  u=self.u;_,item,payload=self.cached_release();u.state(checked_at=0)
+  u.finish(Path(self.tmp.name)/'app')
+  with patch.object(u,'fetch_release',side_effect=OSError('Network unavailable')),patch.object(u,'download',side_effect=AssertionError('Must not re-download')),patch.object(sys,'argv',['updater','check','--current','0.6.8','--automatic']):
+   self.assertEqual(u.main(),0)
+  result=u.read(u.STATE)
+  self.assertEqual(result['phase'],'ready');self.assertEqual(result['release'],item);self.assertEqual(result['error'],'Network unavailable')
+  self.assertEqual((u.HOME/item['name']).read_bytes(),payload)
+ def test_backend_updaters_are_identical(self):
+  source=Path(__file__).resolve().parents[1]
+  self.assertEqual((source/'src/updater.py').read_bytes(),(source/'windows/backend/updater.py').read_bytes())
 
 if __name__=='__main__':unittest.main()

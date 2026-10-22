@@ -1,4 +1,4 @@
-#define AppVersion "0.6.9"
+#define AppVersion "0.6.10"
 [Setup]
 AppId={{4632A797-83A8-460E-A78D-5370CBA5C2F7}
 AppName=投研纵览

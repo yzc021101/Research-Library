@@ -74,8 +74,18 @@ def check(current, automatic=False):
     old=read(STATE)
     if automatic and time.time()-old.get('checked_at',0)<24*3600:return old
     state(phase='checking',error='')
-    item=release_asset(fetch_release());newer=version(item['version'])>version(current)
-    ready=(old.get('phase')=='ready' and old.get('release')==item and (HOME/item['name']).is_file())
+    try:item=release_asset(fetch_release())
+    except Exception as e:
+        # Startup may check while offline. Keep the already verified package
+        # actionable and report the check failure without replacing its state.
+        cached=old.get('release',{})
+        if downloaded(cached) and version(cached['version'])>version(current):
+            return state(phase='ready',current=current,done=cached['size'],total=cached['size'],message='更新已下载；暂时无法检查最新版本',error=str(e))
+        raise
+    newer=version(item['version'])>version(current)
+    # Release notes can change without changing the package. Recover a verified
+    # completed download even if a previous check or process exit changed phase.
+    ready=same_archive(old.get('release',{}),item) and downloaded(item)
     return state(phase=('ready' if ready else 'available') if newer else 'current',release=item,current=current,checked_at=time.time(),error='',message=('发现新版本 '+item['version']) if newer else '已是最新版本')
 
 def cancelled():
@@ -88,13 +98,26 @@ def verify_archive(path,item):
         while b:=f.read(1024*1024):h.update(b)
     if h.hexdigest()!=item['sha256']:raise ValueError('更新包校验失败，未修改当前 App')
 
+def same_archive(a,b):
+    return all(a.get(key)==b.get(key) for key in ('version','name','size','sha256'))
+
+def downloaded(item):
+    try:
+        if item.get('name')!=asset_name():return False
+        version(item['version'])
+        if type(item['size']) is not int or not 0<item['size']<=MAX_ARCHIVE:return False
+        if not re.fullmatch(r'[0-9a-f]{64}',item['sha256']):return False
+        verify_archive(HOME/item['name'],item)
+        return True
+    except (OSError,KeyError,TypeError,ValueError):return False
+
 def download(current):
     item=release_asset(fetch_release()) # Do not trust a persisted or edited download URL.
     if version(item['version'])<=version(current):return state(phase='current',message='已是最新版本',error='')
     if shutil.disk_usage(HOME).free<item['size']+MAX_EXPANDED:raise ValueError('更新需要至少 5 GB 可用空间用于下载和完整性检查')
     (HOME/'cancel').unlink(missing_ok=True)
     path=HOME/item['name'];temp=HOME/(item['name']+'.part')
-    state(phase='downloading',release=item,current=current,done=0,total=item['size'],error='',message='正在下载更新')
+    state(phase='downloading',release=item,current=current,done=0,total=item['size'],transaction_id=None,error='',message='正在下载更新')
     try:
         request=urllib.request.Request(item['url'],headers={'User-Agent':'research_library-updater'})
         with opener().open(request,timeout=30) as res,temp.open('wb') as out:
@@ -144,7 +167,7 @@ def prepare(target):
         if actual-expected:raise ValueError('安装目录含额外文件，请先移出这些文件或手动升级；当前文件未改动')
     current=validate_app(target)
     s=read(STATE);item=release_asset(fetch_release())
-    if s.get('phase')!='ready' or s.get('release')!=item:raise ValueError('发布版本已变化，请重新检查并下载')
+    if s.get('phase')!='ready' or not same_archive(s.get('release',{}),item):raise ValueError('发布版本已变化，请重新检查并下载')
     if version(item['version'])<=version(current):raise ValueError('不允许降级或重复安装')
     archive=HOME/item['name'];verify_archive(archive,item)
     if not os.access(target.parent,os.W_OK):raise ValueError('安装目录不可写，请从发布页下载安装包并手动替换')
@@ -167,9 +190,9 @@ def prepare(target):
                 subprocess.run(['/usr/bin/hdiutil','detach',str(mount)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
                 with contextlib.suppress(OSError):mount.rmdir()
         validate_app(unpacked,item['version'])
-        journal={'target':str(target),'stage':str(stage),'unpacked':str(unpacked),'backup':str(backup),'version':item['version'],'archive':str(archive)}
+        journal={'id':uuid.uuid4().hex,'target':str(target),'stage':str(stage),'unpacked':str(unpacked),'backup':str(backup),'version':item['version'],'archive':str(archive),'release':item}
         write(HOME/'transaction.json',journal)
-        state(phase='prepared',message='已准备，等待 App 重启')
+        state(phase='prepared',transaction_id=journal['id'],message='已准备，等待 App 重启')
         return journal
     except BaseException:
         shutil.rmtree(stage,ignore_errors=True);raise
@@ -182,7 +205,7 @@ def launch_helper(j, desktop_pid):
     # EncodedCommand transports literal paths; it does not change PowerShell policy.
     if os.name=='nt':
         script="""$ErrorActionPreference='Stop'
-$t=@@TARGET@@;$s=@@STAGED@@;$b=@@BACKUP@@;$r=@@RESULT@@;$root=@@ROOT@@
+$t=@@TARGET@@;$s=@@STAGED@@;$b=@@BACKUP@@;$r=@@RESULT@@;$root=@@ROOT@@;$transaction=@@TRANSACTION@@
 try {
  foreach($id in @(@@DESKTOP@@,@@WORKER@@)) {
   $deadline=[DateTime]::UtcNow.AddSeconds(90)
@@ -193,44 +216,67 @@ try {
  }
  Move-Item -LiteralPath $t -Destination $b
  try { Move-Item -LiteralPath $s -Destination $t } catch { Move-Item -LiteralPath $b -Destination $t; throw }
- [IO.File]::WriteAllText($r,'{"ok":true}')
+ [IO.File]::WriteAllText($r,(@{ok=$true;id=$transaction}|ConvertTo-Json))
  $env:RESEARCH_LIBRARY_ROOT=$root
  Start-Process -FilePath (Join-Path $t 'ResearchLibrary.Windows.exe') -WorkingDirectory $t
-} catch { [IO.File]::WriteAllText($r,(@{ok=$false;error=$_.Exception.Message}|ConvertTo-Json)); if(Test-Path -LiteralPath $t){Start-Process -FilePath (Join-Path $t 'ResearchLibrary.Windows.exe') -WorkingDirectory $t} }
+} catch { [IO.File]::WriteAllText($r,(@{ok=$false;id=$transaction;error=$_.Exception.Message}|ConvertTo-Json)); if(Test-Path -LiteralPath $t){Start-Process -FilePath (Join-Path $t 'ResearchLibrary.Windows.exe') -WorkingDirectory $t} }
 """
-        values={'TARGET':ps_quote(j['target']),'STAGED':ps_quote(j['unpacked']),'BACKUP':ps_quote(j['backup']),'RESULT':ps_quote(result),'ROOT':ps_quote(ROOT),'DESKTOP':str(desktop_pid),'WORKER':str(os.getpid())}
+        values={'TARGET':ps_quote(j['target']),'STAGED':ps_quote(j['unpacked']),'BACKUP':ps_quote(j['backup']),'RESULT':ps_quote(result),'ROOT':ps_quote(ROOT),'TRANSACTION':ps_quote(j['id']),'DESKTOP':str(desktop_pid),'WORKER':str(os.getpid())}
         script=re.sub(r'@@([A-Z]+)@@',lambda match:values[match[1]],script)
         encoded=base64.b64encode(script.encode('utf-16-le')).decode()
         exe=Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'
         subprocess.Popen([str(exe),'-NoProfile','-NonInteractive','-EncodedCommand',encoded],cwd=HOME,creationflags=subprocess.CREATE_NO_WINDOW,close_fds=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     else:
         # Arguments, not string interpolation, carry all user-controlled paths.
-        script='''target=$1; staged=$2; backup=$3; result=$4; desktop=$5; worker=$6; root=$7
+        script='''target=$1; staged=$2; backup=$3; result=$4; desktop=$5; worker=$6; root=$7; transaction=$8
 count=0
 while kill -0 "$desktop" 2>/dev/null || kill -0 "$worker" 2>/dev/null; do
- count=$((count+1)); if [ "$count" -gt 90 ]; then printf '{"ok":false,"error":"App did not exit"}' > "$result"; exit 1; fi
+ count=$((count+1)); if [ "$count" -gt 90 ]; then printf '{"ok":false,"id":"%s","error":"App did not exit"}' "$transaction" > "$result"; exit 1; fi
  sleep 1
 done
-if ! /bin/mv "$target" "$backup"; then printf '{"ok":false,"error":"Cannot move old App"}' > "$result"; exit 1; fi
-if ! /bin/mv "$staged" "$target"; then /bin/mv "$backup" "$target"; printf '{"ok":false,"error":"Install rolled back"}' > "$result"; /usr/bin/open -n "$target"; exit 1; fi
-printf '{"ok":true}' > "$result"
+if ! /bin/mv "$target" "$backup"; then printf '{"ok":false,"id":"%s","error":"Cannot move old App"}' "$transaction" > "$result"; exit 1; fi
+if ! /bin/mv "$staged" "$target"; then /bin/mv "$backup" "$target"; printf '{"ok":false,"id":"%s","error":"Install rolled back"}' "$transaction" > "$result"; /usr/bin/open -n "$target"; exit 1; fi
+printf '{"ok":true,"id":"%s"}' "$transaction" > "$result"
 RESEARCH_LIBRARY_ROOT="$root" /usr/bin/open -n "$target" --env "RESEARCH_LIBRARY_ROOT=$root"
 '''
-        subprocess.Popen(['/bin/sh','-c',script,'research-library-updater',j['target'],j['unpacked'],j['backup'],str(result),str(desktop_pid),str(os.getpid()),str(ROOT)],cwd=HOME,start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        subprocess.Popen(['/bin/sh','-c',script,'research-library-updater',j['target'],j['unpacked'],j['backup'],str(result),str(desktop_pid),str(os.getpid()),str(ROOT),j['id']],cwd=HOME,start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 
 def finish(target):
-    j=read(HOME/'transaction.json');result=read(HOME/'install-result.json')
-    if result.get('ok') is False:return state(phase='error',error=result.get('error','安装失败，已保留旧版'))
-    if not j or not result.get('ok') or str(target.absolute())!=j.get('target'):return
-    validate_app(target,j['version'])
+    journal_path=HOME/'transaction.json';result_path=HOME/'install-result.json'
+    j=read(journal_path);result=read(result_path)
+    if not j or str(target.absolute())!=j.get('target'):return
+    # A helper still running or an unrelated result must never consume this
+    # transaction. Legacy releases wrote neither ID, so migrate those once.
+    if type(result.get('ok')) is not bool or j.get('id')!=result.get('id'):return
+    installed=validate_app(target)
+    complete=version(installed)>=version(j['version'])
+    if result['ok'] and not complete:raise ValueError('更新后的应用版本不符，保留更新记录以便恢复')
+    s=read(STATE);release=s.get('release',{})
+    newer=bool(release) and version(release.get('version','0.0.0'))>version(j['version'])
     # Only clean generated siblings belonging to this exact transaction.
+    cleanup=[]
     for key,prefix in [('backup','.research-library-previous-'),('stage','.research-library-update-')]:
         p=Path(j[key])
         if p.parent!=target.absolute().parent or not re.fullmatch(re.escape(prefix)+r'[0-9a-f]{32}',p.name) or p.is_symlink():raise ValueError('更新清理路径无效')
-        shutil.rmtree(p,ignore_errors=True)
+        cleanup.append(p)
+    for p in cleanup:shutil.rmtree(p,ignore_errors=True)
     archive=Path(j['archive'])
-    if archive.parent==HOME and archive.name==asset_name():archive.unlink(missing_ok=True)
-    state(phase='current',current=j['version'],message='已更新到 '+j['version'],error='')
+    item=j.get('release',release)
+    # Different releases intentionally reuse an asset name. Never delete a new
+    # download merely because an older transaction used the same path.
+    if complete and not newer and item.get('version')==j['version'] and archive.parent==HOME and archive.name==asset_name() and downloaded(item):
+        archive.unlink(missing_ok=True)
+    if not newer:
+        if complete:
+            state(phase='current',current=installed,transaction_id=None,message='已更新到 '+installed,error='')
+        elif downloaded(item):
+            state(phase='ready',current=installed,release=item,transaction_id=None,done=item['size'],total=item['size'],message='安装未完成，已保留下载，可再次安装',error=result.get('error','安装失败，已保留旧版'))
+        else:
+            state(phase='error',transaction_id=None,error=result.get('error','安装失败，已保留旧版'))
+    # Consume the journal first: a crash between these unlinks cannot replay a
+    # completed install on the next launch and overwrite newer download state.
+    journal_path.unlink(missing_ok=True)
+    result_path.unlink(missing_ok=True)
 
 @contextlib.contextmanager
 def lock():
@@ -247,7 +293,7 @@ def lock():
         yield
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('action',choices=['check','download','install','finish']);p.add_argument('--current',default='0.6.9');p.add_argument('--target',type=Path);p.add_argument('--pid',type=int);p.add_argument('--automatic',action='store_true');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('action',choices=['check','download','install','finish']);p.add_argument('--current',default='0.6.10');p.add_argument('--target',type=Path);p.add_argument('--pid',type=int);p.add_argument('--automatic',action='store_true');a=p.parse_args()
     with lock():
         try:
             if a.action=='check':
