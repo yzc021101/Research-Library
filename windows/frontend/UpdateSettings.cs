@@ -6,8 +6,40 @@ namespace ResearchLibrary;
 public sealed partial class MainWindow {
  StackPanel? updatePanel;string updateFingerprint="";bool updateWorking;
  JsonObject updateState=new();
+ Window? updateProgressWindow; TextBlock? updateProgressTitle,updateProgressSize,updateProgressMessage; ProgressBar? updateProgressBar; Button? updateCancel;
+ string previousUpdatePhase="";
+ readonly DispatcherTimer progressTimer=new(){Interval=TimeSpan.FromSeconds(1)};
+ void ShowUpdateProgress(){
+  if(updateProgressWindow==null){
+   var window=new Window{Title="更新投研纵览",SystemBackdrop=new Microsoft.UI.Xaml.Media.MicaBackdrop()};
+   var panel=new StackPanel{Padding=new Thickness(24),Spacing=18};
+   updateProgressTitle=Text("正在更新",22);updateProgressBar=new ProgressBar{Minimum=0,Maximum=1};updateProgressSize=Text("",14,true);updateProgressMessage=Text("",14,true);
+   updateCancel=Button("取消下载",()=>{File.WriteAllText(Path.Combine(Engine.Root,"updates","cancel"),"");return Task.CompletedTask;});updateCancel.HorizontalAlignment=HorizontalAlignment.Right;
+   foreach(var item in new UIElement[]{updateProgressTitle,updateProgressBar,updateProgressSize,updateProgressMessage,updateCancel})panel.Children.Add(item);
+   window.Content=panel;var scale=Shell.XamlRoot?.RasterizationScale??1;window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(520*scale),(int)(300*scale)));
+   window.Closed+=(_,_)=>{updateProgressWindow=null;};updateProgressWindow=window;
+  }
+  RefreshUpdateProgress();updateProgressWindow.Activate();
+ }
+ void RefreshUpdateProgress(){
+  if(updateProgressWindow==null)return;
+  string phase=S(updateState,"phase");
+  updateProgressTitle!.Text=phase switch{"downloading"=>"正在下载更新","verifying"=>"正在校验下载","preparing" or "prepared"=>"正在安装更新","ready"=>"下载完成","current"=>"更新完成","error"=>"更新未完成","cancelled"=>"下载已取消",_=>"正在检查更新"};
+  long done=updateState["done"]?.GetValue<long>()??0,total=updateState["total"]?.GetValue<long>()??0;
+  updateProgressBar!.Maximum=Math.Max(1,total);updateProgressBar.Value=Math.Min(done,Math.Max(1,total));updateProgressBar.IsIndeterminate=phase is "preparing" or "prepared" or "checking";
+  updateProgressSize!.Text=$"{UpdateBytes(done)} / {UpdateBytes(total)}";updateProgressSize.Visibility=phase is "downloading" or "ready" or "verifying"?Visibility.Visible:Visibility.Collapsed;
+  updateProgressMessage!.Text=S(updateState,"error");if(updateProgressMessage.Text.Length==0)updateProgressMessage.Text=S(updateState,"message");
+  updateCancel!.Visibility=phase=="downloading"?Visibility.Visible:Visibility.Collapsed;
+ }
+ static string UpdateBytes(long value)=>value>=1024*1024?$"{value/(1024d*1024):N1} MB":$"{value/1024d:N0} KB";
+ void PollUpdateProgress(){
+  ReadUpdate();string phase=S(updateState,"phase");
+  if(phase!=previousUpdatePhase){previousUpdatePhase=phase;if(phase is "downloading" or "preparing")ShowUpdateProgress();}
+  RefreshUpdateProgress();UpdateSoftware();
+ }
+
  readonly DispatcherTimer updateTimer=new(){Interval=TimeSpan.FromMinutes(30)};
- string UpdateVersion { get { try{return JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,"distribution.json")))?["version"]?.ToString()??"0.6.8";}catch{return "0.6.8";} } }
+ string UpdateVersion { get { try{return JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,"distribution.json")))?["version"]?.ToString()??"0.6.9";}catch{return "0.6.9";} } }
  void ReadUpdate(){try{using var stream=new FileStream(Path.Combine(Engine.Root,"updates","state.json"),FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);updateState=JsonNode.Parse(stream)!.AsObject();}catch{}}
  async Task<bool> RunUpdate(string action,bool automatic=false){
   if(updateWorking)return false;updateWorking=true;updateFingerprint="";UpdateSoftware();
@@ -25,7 +57,7 @@ public sealed partial class MainWindow {
  }
  Task BeginUpdate(string action){_=RunUpdate(action);return Task.CompletedTask;}
  async Task AutomaticUpdate(){if(Engine.DiskSettings()["automatic_updates"]?.GetValue<bool>()==true)await RunUpdate("check",true);}
- async Task InitializeUpdates(){await RunUpdate("finish");await AutomaticUpdate();updateTimer.Tick+=async(_,_)=>await AutomaticUpdate();updateTimer.Start();}
+ async Task InitializeUpdates(){progressTimer.Tick+=(_,_)=>PollUpdateProgress();progressTimer.Start();await RunUpdate("finish");await AutomaticUpdate();updateTimer.Tick+=async(_,_)=>await AutomaticUpdate();updateTimer.Start();}
  void SoftwareSettings(){
   Heading("软件更新");
   var automatic=new ToggleSwitch{MinWidth=0,IsOn=settings["automatic_updates"]?.GetValue<bool>()==true,OnContent="开",OffContent="关"};Identify(automatic,"AutomaticUpdates","自动更新");
@@ -47,6 +79,7 @@ public sealed partial class MainWindow {
    if(phase=="ready"){var b=Button("安装并重启…",InstallUpdate,true);Identify(b,"InstallUpdate","安装并重启");b.IsEnabled=!updateWorking&&status["busy"]?.GetValue<bool>()!=true&&S(status["model_job"],"phase") is not ("starting" or "downloading" or "indexing" or "ready");actions.Children.Add(b);}
    updatePanel.Children.Add(Card(Row(Text("新版本 "+S(release,"version"),16),actions)));
   }
+  if(phase is "downloading" or "verifying" or "preparing" or "prepared" or "ready")updatePanel.Children.Add(Button("查看更新进度",()=>{ShowUpdateProgress();return Task.CompletedTask;}));
   if(updateWorking){
    updatePanel.Children.Add(new ProgressBar{Minimum=0,Maximum=Math.Max(1,updateState["total"]?.GetValue<long>()??1),Value=updateState["done"]?.GetValue<long>()??0,IsIndeterminate=phase!="downloading"});
    if(phase=="downloading")updatePanel.Children.Add(Button("取消下载",()=>{File.WriteAllText(Path.Combine(Engine.Root,"updates","cancel"),"");return Task.CompletedTask;}));
@@ -57,7 +90,7 @@ public sealed partial class MainWindow {
   var dialog=new ContentDialog{XamlRoot=Shell.XamlRoot,Title="安装更新并重启投研纵览？",Content="会短暂停止本地服务，替换 App 后重新打开。来源文件、索引和设置保留。如 MCP 客户端仍占用程序，请先关闭连接。",PrimaryButtonText="安装并重启",CloseButtonText="取消"};
   if(await dialog.ShowAsync()!=ContentDialogResult.Primary)return;
   bool wasRunning=await engine.Running();if(wasRunning)await engine.Stop();
-  if(await RunUpdate("install")){updateTimer.Stop();await Quit();}
+  if(await RunUpdate("install")){updateTimer.Stop();progressTimer.Stop();updateProgressWindow?.Close();await Quit();}
   else if(wasRunning)await engine.Start();
  }
 }

@@ -47,7 +47,7 @@ public sealed partial class MainWindow : Window {
  Grid Row(FrameworkElement description,FrameworkElement action){var r=new Grid();r.Children.Add(description);r.Children.Add(action);AdaptiveLayout.Row(r,description,action);return r;}
  static void Identify(DependencyObject control,string id,string name){Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(control,id);Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(control,name);}
  public void ShowMain(){AppWindow.Show();if(AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter p&&p.State==Microsoft.UI.Windowing.OverlappedPresenterState.Minimized)p.Restore();Activate();}
- async Task Quit(){if(closing)return;closing=true;timer.Stop();updateTimer.Stop();tray?.Dispose();try{await engine.CloseOwned();}finally{Close();}}
+ async Task Quit(){if(closing)return;closing=true;timer.Stop();updateTimer.Stop();progressTimer.Stop();updateProgressWindow?.Close();tray?.Dispose();try{await engine.CloseOwned();}finally{Close();}}
  async Task TrayCommand(string action){
   if(action=="quit"){await Quit();return;}
   if(action is "open" or "mcp" or "settings"){ShowMain();if(action!="open")await Guard(()=>Go(action));return;}

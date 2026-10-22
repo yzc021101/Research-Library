@@ -1,5 +1,6 @@
 from paths import ROOT, INBOX, DATA, MODEL, inside
-from models import available, spec, create_embedder, table_schema
+from models import available, spec, table_schema
+from embedding_process import EmbeddingProcess as create_embedder
 from document_metadata import extract_metadata, SCHEMA_VERSION
 from document_formats import SUPPORTED, LEGACY, PARSER_VERSION, extract_document
 from table_content import display_content
@@ -13,6 +14,8 @@ import shutil
 import sqlite3
 import subprocess
 import threading
+import time
+import gc
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -113,6 +116,7 @@ class Library(StorageMixin):
                 else: self.db.execute("UPDATE sources SET path=? WHERE path=?", (absolute, source[0]))
         self.db.commit()
         self._embedder = None
+        self._embedding_last_used = time.monotonic()
         self._vectors = None
         stored = self.db.execute("SELECT value FROM library_config WHERE key='embedding'").fetchone()
         self.embedding = json.loads(stored[0]) if stored else {"model": MODEL, "table": "passages"}
@@ -152,7 +156,22 @@ class Library(StorageMixin):
         try: return self.vectors().open_table(self.embedding['table']).count_rows() >= count
         except Exception: return False
 
+    def release_idle_model(self, idle_seconds=300):
+        # Never race an active search/index or wait on a long import.
+        if not self.lock.acquire(blocking=False): return False
+        try:
+            if self._embedder is None or time.monotonic()-self._embedding_last_used < idle_seconds: return False
+            if hasattr(self._embedder, "close"): self._embedder.close()
+            self._embedder = None
+            gc.collect()
+            return True
+        finally:
+            self.lock.release()
+
     def embedder(self):
+        self._embedding_last_used = time.monotonic()
+        if self._embedder is not None and hasattr(self._embedder, "process") and self._embedder.process.poll() is not None:
+            self._embedder.close(); self._embedder = None
         if self._embedder is None:
             self._embedder = create_embedder(self.embedding["model"])
         return self._embedder
@@ -271,19 +290,29 @@ class Library(StorageMixin):
                 raise ValueError('未提取到可检索文字；' + '；'.join(ocr_errors[:3]))
             return meta, pages, chunks
 
-    def sync(self, prepared=False):
+    def sync(self, prepared=False, retry=False, path=None):
         with self.lock:
             if not prepared: self.sync_cancel.clear()
             try:
-                return self._sync()
+                return self._sync(retry=retry, path=path)
             finally:
                 self.set_progress(stage='cancelled' if self.sync_cancel.is_set() else 'idle')
 
-    def _sync(self):
+    def _sync(self, retry=False, path=None):
         with self.lock:
             # Retry recoverable stylesheet failures first when upgrading the reader.
             style_failures = {r[0] for r in self.db.execute("SELECT path FROM sources WHERE state='failed' AND error LIKE '%stylesheet%'")}
             files = sorted(self.files(), key=lambda p: str(p.absolute()) not in style_failures)
+            if retry:
+                failed = {row[0] for row in self.db.execute("SELECT path FROM sources WHERE state='failed'")}
+                if path is not None:
+                    if not isinstance(path, str) or path not in failed: raise ValueError("请选择导入失败的文件")
+                    failed = {path}
+                files = [p for p in files if str(p.absolute()) in failed]
+                active = {str(p.absolute()) for p in files}
+                for missing in failed - active:
+                    self.db.execute("UPDATE sources SET state='missing',checked_at=? WHERE path=?", (now(), missing))
+                self.db.commit()
             seen, results = set(), []
             from office_ocr import cancelled
             for file_index, path in enumerate(files, 1):
@@ -384,7 +413,7 @@ class Library(StorageMixin):
                     self.db.commit()
                     results.append({"file": rel, "action": "failed", "error": str(exc)})
             for row in self.db.execute("SELECT path FROM sources").fetchall():
-                if not self.sync_cancel.is_set() and row[0] not in seen:
+                if not retry and not self.sync_cancel.is_set() and row[0] not in seen:
                     self.db.execute("UPDATE sources SET state='missing',checked_at=? WHERE path=?", (now(), row[0]))
             self.db.commit()
             return {"results": results, "cancelled": self.sync_cancel.is_set(), "status": self.status()}
@@ -393,7 +422,7 @@ class Library(StorageMixin):
         with self.lock:
             sources = [dict(x) for x in self.db.execute("SELECT * FROM sources ORDER BY path")]
             docs = self.active_docs()
-            return {"software_license": "AGPL-3.0-only", "source_code_url": "https://github.com/yzc021101/Research-Library/tree/v0.6.8", "root": str(ROOT), "inbox": str(INBOX), "active_documents": len(docs),
+            return {"software_license": "AGPL-3.0-only", "source_code_url": "https://github.com/yzc021101/Research-Library/tree/v0.6.9", "root": str(ROOT), "inbox": str(INBOX), "active_documents": len(docs),
                     "supported_formats": sorted(SUPPORTED),
                     "search_suggestions": search_suggestions(docs.values()),
                     "stored_versions": self.db.execute("SELECT count(*) FROM documents").fetchone()[0],

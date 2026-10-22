@@ -64,17 +64,17 @@ class Engine:
                 "model_loaded": self.library._embedder is not None, "pid": os.getpid(),
                 "components": self.components.status(), "models": catalog(self.library.embedding["model"]), "model_job": dict(self.model_job)}
 
-    def sync(self):
+    def sync(self, retry=False, path=None):
         with self.state_lock:
             if self.working or self.model_busy or self.components.job['phase'] in ('installing', 'downloading'):
-                self.pending_sync = True
-                return {"accepted": False, "reason": "queued_after_current_sync"}
+                if not retry: self.pending_sync = True
+                return {"accepted": False, "reason": "busy" if retry else "queued_after_current_sync"}
             self.library.sync_cancel.clear()
             self.last_error = None
             self.working = True
         def work():
             try:
-                result = self.library.sync(prepared=True)
+                result = self.library.sync(prepared=True, retry=retry, path=path)
                 with self.state_lock:
                     self.cached_status = result["status"]
                     self.last_error = "同步已取消，已完成的文档保留。" if result.get("cancelled") else None
@@ -218,7 +218,8 @@ class Engine:
                 if time.time()-self.last_cleanup > 86400 and not self.working and not self.model_busy:
                     self.storage_action('expired')
                     self.last_cleanup = time.time()
-                current = self.library.file_signature()
+                if not self.working and not self.model_busy: self.library.release_idle_model()
+                current = self.library.file_signature() if cfg["auto_scan"] else self.watch_signature
                 if cfg["auto_scan"] and current != self.watch_signature and not self.working and not self.model_busy:
                     if self.sync()["accepted"]: self.watch_signature = current
             except Exception as exc:
@@ -306,6 +307,7 @@ def main():
                     return self.send(200, {'cancelled':True})
                 if self.path == "/models/cancel": return self.send(200, engine.cancel_model())
                 if self.path == "/sync/cancel": return self.send(200, engine.cancel_sync())
+                if self.path == "/imports/retry": return self.send(200, engine.sync(retry=True, path=data.get("path")))
                 if self.path == "/sync": return self.send(200, engine.sync())
                 if self.path == "/tool": return self.send(200, engine.tool(data["name"], data.get("arguments", {})))
                 if self.path == "/shutdown":

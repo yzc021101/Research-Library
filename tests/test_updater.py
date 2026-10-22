@@ -1,5 +1,5 @@
 """Updater trust boundaries; no live application or network changes."""
-import importlib, io, json, os, tempfile, unittest, zipfile
+import importlib, io, json, os, tempfile, unittest, zipfile, hashlib
 from pathlib import Path
 from unittest.mock import patch
 import sys
@@ -15,6 +15,21 @@ class UpdaterTests(unittest.TestCase):
  def release(self,tag='v0.6.8'):
   u=self.u;n=u.asset_name()
   return {'tag_name':tag,'assets':[{'name':n,'state':'uploaded','browser_download_url':u.REPO+'/releases/download/'+tag+'/'+n,'digest':'sha256:'+'a'*64,'size':20}]}
+ def test_download_progress_and_verification(self):
+  u=self.u;payload=b'x'*(2*1024*1024+7);release=self.release();item=release['assets'][0]
+  item['size']=len(payload);item['digest']='sha256:'+hashlib.sha256(payload).hexdigest()
+  history=[];original=u.state
+  def record(**changes):
+   result=original(**changes);history.append(dict(result));return result
+  class FakeOpener:
+   def open(self,*a,**k):return io.BytesIO(payload)
+  with patch.object(u,'fetch_release',return_value=release),patch.object(u,'opener',return_value=FakeOpener()),patch.object(u,'state',side_effect=record):
+   result=u.download('0.0.1')
+  self.assertEqual(result['phase'],'ready');self.assertEqual(result['done'],len(payload));self.assertEqual(result['total'],len(payload))
+  self.assertEqual([x['phase'] for x in history if x['phase']!='downloading'],['verifying','ready'])
+  counts=[x['done'] for x in history];self.assertEqual(counts,sorted(counts))
+  self.assertEqual((u.HOME/u.asset_name()).read_bytes(),payload)
+  self.assertFalse(list(u.HOME.glob('*.part')))
  def test_numeric_versions(self):
   self.assertGreater(self.u.version('0.10.0'),self.u.version('0.9.9'))
   for v in ['v1.2.3-beta','../foo','1.2','1.2.3\n']:

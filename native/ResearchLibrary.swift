@@ -179,6 +179,15 @@ struct ModelOption: Identifiable, Decodable {
     func post(_ path: String, _ payload: [String: Any] = [:]) async throws -> [String: Any] {
         try await request(path, body: JSONSerialization.data(withJSONObject: payload))
     }
+    func retryImports(path: String? = nil) async {
+        guard !busy && !modelBusy else { return }
+        busy = true
+        do {
+            let result = try await post("/imports/retry", path.map { ["path": $0] } ?? [:])
+            message = result["accepted"] as? Bool == true ? "已开始重试失败文件" : "请等待当前任务完成后重试"
+        } catch { message = error.localizedDescription }
+        await refresh()
+    }
     func refresh() async {
         do {
             let s = try await request("/status")
@@ -558,6 +567,10 @@ struct MainView: View {
                 if files.isEmpty {
                     Text(failed ? "没有失败的导入记录" : "暂无已入库文档").font(.callout).foregroundStyle(.secondary).padding(.top, 8)
                 } else {
+                    if failed {
+                        HStack { Spacer(); Button("重试所有失败文件") { Task { await m.retryImports() } }
+                            .disabled(m.busy || m.modelBusy).accessibilityIdentifier("RetryAllImports") }
+                    }
                     LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(files, id: \.pathIdentity) { file in
                             VStack(alignment: .leading, spacing: 6) {
@@ -567,6 +580,10 @@ struct MainView: View {
                                     Text(URL(fileURLWithPath: file["path"] as? String ?? "").lastPathComponent)
                                         .lineLimit(2).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                                         .help(file["path"] as? String ?? "")
+                                    if failed {
+                                        Button("重试") { Task { await m.retryImports(path: file["path"] as? String) } }
+                                            .disabled(m.busy || m.modelBusy).accessibilityIdentifier("RetryImport")
+                                    }
                                 }
                                 if let error = file["error"] as? String, !error.isEmpty {
                                     Text(error).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)

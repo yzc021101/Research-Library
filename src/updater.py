@@ -104,7 +104,7 @@ def download(current):
                 if count>item['size']:raise ValueError('更新包超出预期大小')
                 out.write(b)
                 if time.monotonic()-last>.5:state(done=count);last=time.monotonic()
-        cancelled();verify_archive(temp,item);os.replace(temp,path)
+        cancelled();state(phase='verifying',done=count,message='下载完成，正在校验完整性');verify_archive(temp,item);os.replace(temp,path)
         return state(phase='ready',done=item['size'],message='更新已下载，安装并重启后生效',error='')
     finally:temp.unlink(missing_ok=True)
 
@@ -247,7 +247,7 @@ def lock():
         yield
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('action',choices=['check','download','install','finish']);p.add_argument('--current',default='0.6.8');p.add_argument('--target',type=Path);p.add_argument('--pid',type=int);p.add_argument('--automatic',action='store_true');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('action',choices=['check','download','install','finish']);p.add_argument('--current',default='0.6.9');p.add_argument('--target',type=Path);p.add_argument('--pid',type=int);p.add_argument('--automatic',action='store_true');a=p.parse_args()
     with lock():
         try:
             if a.action=='check':

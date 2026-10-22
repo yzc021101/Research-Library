@@ -43,7 +43,12 @@ public sealed class Engine {
   for(int i=0;i<50;i++){if(await Running())return;if(owned.HasExited)throw new IOException("服务未能启动，请查看 app\\logs 中的日志。");await Task.Delay(200);}
   throw new TimeoutException("服务启动超时，请重试。");
  }
- private static async Task Log(StreamReader reader,string name){string text=await reader.ReadToEndAsync();if(text.Length>0)await File.AppendAllTextAsync(Path.Combine(Root,"logs",name),text);}
+ private static async Task Log(StreamReader reader,string name){
+  // Drain long-running backend logs incrementally instead of retaining them until exit.
+  using var writer=new StreamWriter(new FileStream(Path.Combine(Root,"logs",name),FileMode.Append,FileAccess.Write,FileShare.ReadWrite)){AutoFlush=true};
+  var buffer=new char[4096];int count;
+  while((count=await reader.ReadAsync(buffer.AsMemory()))>0)await writer.WriteAsync(buffer.AsMemory(0,count));
+ }
  public async Task Stop(){
   await Request("/shutdown",new{});
   for(int i=0;i<40;i++){if(!await Running())return;await Task.Delay(200);}

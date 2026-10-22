@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, copy_metadata, collect_submodules
 source = Path(os.environ['RL_SOURCE'])
-hidden = ['backend','server','model_worker','settings_cli','check_mcp','package_smoke','components','updater']
+hidden = ['backend','server','model_worker','embedding_worker','settings_cli','check_mcp','package_smoke','components','updater']
 hidden += collect_submodules('fastembed')
 datas = []
 for name in ('fastembed','mcp','lancedb','onnxruntime','tokenizers','huggingface_hub'):

@@ -16,7 +16,7 @@ sh packaging/build-macos.sh
 
 ## Windows x64
 
-需要 Windows 11、CPython 3.12 x64、.NET 10 SDK、对应 Windows SDK/WinUI 编译工具。恢复依赖后在 PowerShell 调用：
+需要 Inno Setup 6.7.3（ISCC.exe 可用）、Windows 11、CPython 3.12 x64、.NET 10 SDK、对应 Windows SDK/WinUI 编译工具。恢复依赖后在 PowerShell 调用：
 
 ```powershell
 py -3.12 -m venv .venv
@@ -24,7 +24,7 @@ py -3.12 -m venv .venv
 ./packaging/build-windows.ps1 -Python .venv/Scripts/python.exe -DotNet dotnet
 ```
 
-输出 dist/research_library-windows-x64.zip。PowerShell 执行策略由构建者按其环境管理；脚本不修改系统策略。优先在 x64 Windows 构建。runtime.spec 排除独立 VC CRT DLL，再由 App 引导用户从微软官网下载运行库；inspect-pe.py 拒绝不兼容架构。源码中的 windows_runtime.py 为用户已安装的系统运行库生成必要的 DLL 文件名别名。
+输出 dist/research_library-windows-x64-setup.exe（安装向导）及 dist/research_library-windows-x64.zip（供内置更新器及便携使用）。安装器默认在当前用户目录安装，不要求管理员权限；应用文件在 app 子目录中，卸载程序与该目录并列，避免应用自动更新时替换卸载记录。用户资料存放在独立资料库目录，卸载保留资料。PowerShell 执行策略由构建者按其环境管理；脚本不修改系统策略。优先在 x64 Windows 构建。runtime.spec 排除独立 VC CRT DLL，再由 App 引导用户从微软官网下载运行库；inspect-pe.py 拒绝不兼容架构。源码中的 windows_runtime.py 为用户已安装的系统运行库生成必要的 DLL 文件名别名。
 
 ## 可选组件与下载清单
 

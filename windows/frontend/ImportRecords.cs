@@ -7,6 +7,14 @@ public sealed partial class MainWindow {
  StackPanel? importPanel;
  string importFingerprint="";
  bool failedImportsExpanded=true,readyImportsExpanded=false;
+ async Task RetryImports(string? path=null){
+  if(busy||status["busy"]?.GetValue<bool>()==true)return;
+  await Guard(async()=>{
+   var result=await engine.Request("/imports/retry",path==null?new{}:(object)new{path});
+   Notify(result["accepted"]?.GetValue<bool>()==true?"已开始重试失败文件":"请等待当前任务完成后重试");
+   importFingerprint="";await Refresh(false);
+  });
+ }
  void ImportRecords(){
   Heading("入库记录");
   importPanel=new StackPanel{Spacing=12};Body.Children.Add(importPanel);
@@ -14,7 +22,7 @@ public sealed partial class MainWindow {
  }
  void UpdateImportRecords(){
   if(importPanel==null)return;
-  string fingerprint=(status["sources"]?.ToJsonString()??"[]")+(settings["source_folders"]?.ToJsonString()??"[]");
+  string fingerprint=(status["sources"]?.ToJsonString()??"[]")+(settings["source_folders"]?.ToJsonString()??"[]")+S(status,"busy");
   if(fingerprint==importFingerprint)return;
   importFingerprint=fingerprint;importPanel.Children.Clear();
   var records=(status["sources"]?.AsArray()??new()).Where(x=>x!=null&&IsCurrentSource(S(x,"path"))).ToArray();
@@ -35,6 +43,7 @@ public sealed partial class MainWindow {
   void Populate(){
    if(populated)return;populated=true;
    if(records.Length==0){body.Children.Add(Text(failed?"没有失败的导入记录":"暂无已入库文档",14,true));return;}
+   if(failed){var retryAll=Button("重试所有失败文件",()=>RetryImports());Identify(retryAll,"RetryAllImports","重试所有失败文件");retryAll.IsEnabled=status["busy"]?.GetValue<bool>()!=true;body.Children.Add(Row(Text("重新导入失败的文件",14,true),retryAll));}
    foreach(var record in records.OrderBy(x=>Path.GetFileName(S(x,"path")),StringComparer.OrdinalIgnoreCase)){
     string path=S(record,"path");
     var title=Text(Path.GetFileName(path),15);ToolTipService.SetToolTip(title,path);
@@ -42,7 +51,10 @@ public sealed partial class MainWindow {
     string error=S(record,"error");
     if(error.Length>0)details.Children.Add(Text(error,14,true));
     else details.Children.Add(Text(path,13,true));
-    body.Children.Add(Card(Row(details,Button("打开原文件",()=>OpenOriginal(path)))));
+    var actions=new StackPanel{Orientation=Orientation.Horizontal,Spacing=8};
+    if(failed){var retry=Button("重试",()=>RetryImports(path));Identify(retry,"RetryImport","重试 "+Path.GetFileName(path));retry.IsEnabled=status["busy"]?.GetValue<bool>()!=true;actions.Children.Add(retry);}
+    actions.Children.Add(Button("打开原文件",()=>OpenOriginal(path)));
+    body.Children.Add(Card(Row(details,actions)));
    }
   }
   group.Expanding+=(_,_)=>{if(failed)failedImportsExpanded=true;else readyImportsExpanded=true;Populate();};
