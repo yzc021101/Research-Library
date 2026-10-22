@@ -8,12 +8,11 @@ public sealed partial class MainWindow {
  string importFingerprint="";
  bool failedImportsExpanded=true,readyImportsExpanded=false;
  async Task RetryImports(string? path=null){
-  if(busy||status["busy"]?.GetValue<bool>()==true)return;
-  await Guard(async()=>{
-   var result=await engine.Request("/imports/retry",path==null?new{}:(object)new{path});
-   Notify(result["accepted"]?.GetValue<bool>()==true?"已开始重试失败文件":"请等待当前任务完成后重试");
-   importFingerprint="";await Refresh(false);
-  });
+  // Button already runs this action inside Guard; nesting it would discard every click.
+  if(status["busy"]?.GetValue<bool>()==true)return;
+  var result=await engine.Request("/imports/retry",path==null?new{}:(object)new{path});
+  Notify(result["accepted"]?.GetValue<bool>()==true?"已开始重试失败文件":"请等待当前任务完成后重试");
+  importFingerprint="";await Refresh(false);
  }
  void ImportRecords(){
   Heading("入库记录");
