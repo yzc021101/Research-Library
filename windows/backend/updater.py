@@ -19,7 +19,20 @@ MAX_EXPANDED = 4*1024**3
 
 def write(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8');os.replace(tmp,path)
+    tmp=path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
+    try:
+        tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8')
+        # A Windows reader can briefly deny replacement of an open file.
+        # Keep the previous complete state until the atomic swap succeeds.
+        for attempt in range(20):
+            try:
+                os.replace(tmp,path)
+                break
+            except PermissionError:
+                if attempt==19:raise
+                time.sleep(.05)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 def read(path, default=None):
     try:return json.loads(path.read_text(encoding='utf-8'))
@@ -171,7 +184,13 @@ def launch_helper(j, desktop_pid):
         script="""$ErrorActionPreference='Stop'
 $t=@@TARGET@@;$s=@@STAGED@@;$b=@@BACKUP@@;$r=@@RESULT@@;$root=@@ROOT@@
 try {
- foreach($id in @(@@DESKTOP@@,@@WORKER@@)) { $p=Get-Process -Id $id -ErrorAction SilentlyContinue; if($p){Wait-Process -Id $id -Timeout 90 -ErrorAction Stop} }
+ foreach($id in @(@@DESKTOP@@,@@WORKER@@)) {
+  $deadline=[DateTime]::UtcNow.AddSeconds(90)
+  while(Get-Process -Id $id -ErrorAction SilentlyContinue) {
+   if([DateTime]::UtcNow -ge $deadline){throw 'App did not exit within 90 seconds'}
+   Start-Sleep -Milliseconds 200
+  }
+ }
  Move-Item -LiteralPath $t -Destination $b
  try { Move-Item -LiteralPath $s -Destination $t } catch { Move-Item -LiteralPath $b -Destination $t; throw }
  [IO.File]::WriteAllText($r,'{"ok":true}')
@@ -228,7 +247,7 @@ def lock():
         yield
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('action',choices=['check','download','install','finish']);p.add_argument('--current',default='0.6.6');p.add_argument('--target',type=Path);p.add_argument('--pid',type=int);p.add_argument('--automatic',action='store_true');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('action',choices=['check','download','install','finish']);p.add_argument('--current',default='0.6.7');p.add_argument('--target',type=Path);p.add_argument('--pid',type=int);p.add_argument('--automatic',action='store_true');a=p.parse_args()
     with lock():
         try:
             if a.action=='check':

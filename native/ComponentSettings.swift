@@ -48,7 +48,7 @@ struct ComponentSettings: View {
             }
             if let text = job["message"] as? String { Text(text).font(.callout).foregroundStyle(.secondary) }
             if let text = job["error"] as? String { Text(text).font(.callout).foregroundStyle(.secondary) }
-            HStack { Text("AGPL-3.0 开源软件"); Spacer(); Link("许可证与对应源码", destination: URL(string: "https://github.com/yzc021101/Research-Library/tree/v0.6.6")!) }
+            HStack { Text("AGPL-3.0 开源软件"); Spacer(); Link("许可证与对应源码", destination: URL(string: "https://github.com/yzc021101/Research-Library/tree/v0.6.7")!) }
         } header: { Text("运行环境与可选组件") } footer: { Text("基础运行环境随完整 App 提供，无需单独安装 Python。OCR 与旧版 Office 转换器按需联网下载，校验后安装到本应用的资料库目录。安装或移除后重启服务；系统已有软件保持不变。") }
     }
     func size(_ value: Any?) -> String { ByteCountFormatter.string(fromByteCount: (value as? NSNumber)?.int64Value ?? 0, countStyle: .file) }

@@ -12,7 +12,7 @@ class UpdaterTests(unittest.TestCase):
   for n in ['paths','components','updater']:sys.modules.pop(n,None)
   self.u=importlib.import_module('updater');self.u.HOME.mkdir()
  def tearDown(self):self.tmp.cleanup()
- def release(self,tag='v0.6.6'):
+ def release(self,tag='v0.6.7'):
   u=self.u;n=u.asset_name()
   return {'tag_name':tag,'assets':[{'name':n,'state':'uploaded','browser_download_url':u.REPO+'/releases/download/'+tag+'/'+n,'digest':'sha256:'+'a'*64,'size':20}]}
  def test_numeric_versions(self):
@@ -20,7 +20,7 @@ class UpdaterTests(unittest.TestCase):
   for v in ['v1.2.3-beta','../foo','1.2','1.2.3\n']:
    with self.assertRaises(ValueError):self.u.version(v)
  def test_release_trust(self):
-  self.assertEqual(self.u.release_asset(self.release())['version'],'0.6.6')
+  self.assertEqual(self.u.release_asset(self.release())['version'],'0.6.7')
   for key,val in [('browser_download_url','https://example.com/a'),('digest',''),('size',-1)]:
    d=self.release();d['assets'][0][key]=val
    with self.assertRaises(ValueError):self.u.release_asset(d)
@@ -28,7 +28,7 @@ class UpdaterTests(unittest.TestCase):
   with self.assertRaises(ValueError):self.u.release_asset(d)
  def test_no_downgrade(self):
   with patch.object(self.u,'fetch_release',return_value=self.release('v0.6.3')):
-   self.assertEqual(self.u.check('0.6.6')['phase'],'current')
+   self.assertEqual(self.u.check('0.6.7')['phase'],'current')
  def test_available_and_daily_throttle(self):
   with patch.object(self.u,'fetch_release',return_value=self.release()) as fetch:
    self.assertEqual(self.u.check('0.6.3')['phase'],'available');self.u.check('0.6.3',True);self.assertEqual(fetch.call_count,1)
@@ -56,5 +56,25 @@ class UpdaterTests(unittest.TestCase):
   self.assertEqual((target/'sentinel').read_text(),'original')
  def test_invalid_json_ignored(self):
   self.u.STATE.write_text('{bad');self.assertEqual(self.u.read(self.u.STATE),{})
+ def test_busy_state_file_retried_atomically(self):
+  self.u.write(self.u.STATE,{'phase':'old'})
+  replace=self.u.os.replace;calls=[]
+  def busy_then_replace(src,dst):
+   calls.append(1)
+   if len(calls)<3:
+    self.assertEqual(self.u.read(self.u.STATE),{'phase':'old'})
+    raise PermissionError('Sharing violation')
+   return replace(src,dst)
+  with patch.object(self.u.os,'replace',side_effect=busy_then_replace),patch.object(self.u.time,'sleep'):
+   self.u.write(self.u.STATE,{'phase':'ready'})
+  self.assertEqual(self.u.read(self.u.STATE),{'phase':'ready'})
+  self.assertEqual(len(calls),3);self.assertFalse(list(self.u.HOME.glob('*.tmp')))
+ def test_persistent_write_failure_preserves_previous_state(self):
+  self.u.write(self.u.STATE,{'phase':'old'})
+  with patch.object(self.u.os,'replace',side_effect=PermissionError('Denied')) as replace,patch.object(self.u.time,'sleep'):
+   with self.assertRaises(PermissionError):self.u.write(self.u.STATE,{'phase':'ready'})
+  self.assertEqual(replace.call_count,20)
+  self.assertEqual(self.u.read(self.u.STATE),{'phase':'old'})
+  self.assertFalse(list(self.u.HOME.glob('*.tmp')))
 
 if __name__=='__main__':unittest.main()
