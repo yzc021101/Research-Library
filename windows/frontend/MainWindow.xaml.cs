@@ -46,6 +46,7 @@ public sealed partial class MainWindow : Window {
  Brush Brush(string name)=>(Brush)Application.Current.Resources[name];
  TextBlock Text(string text,double size=14,bool secondary=false)=>new(){Text=text,FontSize=size,TextWrapping=TextWrapping.Wrap,Style=(Style)Application.Current.Resources[secondary?"ResearchSecondaryText":"ResearchPrimaryText"],IsTextSelectionEnabled=true};
  StackPanel Stack(params UIElement[] elements){var s=new StackPanel{Spacing=10};foreach(var e in elements)s.Children.Add(e);return s;}
+ Grid Actions(params Button[] buttons)=>AdaptiveLayout.Actions(buttons);
  Border Card(UIElement child)=>new(){Style=(Style)Application.Current.Resources["ResearchCardStyle"],Child=child};
  Grid Row(FrameworkElement description,FrameworkElement action){var r=new Grid();r.Children.Add(description);r.Children.Add(action);AdaptiveLayout.Row(r,description,action);return r;}
  static void Identify(DependencyObject control,string id,string name){Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(control,id);Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(control,name);}
@@ -231,7 +232,7 @@ public sealed partial class MainWindow : Window {
     Body.Children.Add(Card(Row(Stack(Text("大文件模式",16),Text("有效单元格额度从 200 万提高至 500 万，读取时间和索引空间也会增加。",14,true)),SettingToggle("large_file_mode",false,"LargeFileMode","大文件模式"))));
     Note("部分入库文件可以在资料来源中重试。Excel 使用文件已保存的计算结果，不执行公式或宏。");
     StorageSettings();
-    Heading("资料库位置");Body.Children.Add(Card(Row(Stack(Text("资料库目录",16),Text(Engine.Root,14,true)),Stack(Button("管理来源文件夹",()=>Go("sources")),Button("打开资料库文件夹",()=>OpenFolder(Engine.Root))))));
+    Heading("资料库位置");Body.Children.Add(Card(Row(Stack(Text("资料库目录",16),Text(Engine.Root,14,true)),Actions(Button("管理来源文件夹",()=>Go("sources")),Button("打开资料库文件夹",()=>OpenFolder(Engine.Root))))));
   SettingsSection("模型与组件");
     Heading("向量模型","模型按需载入。切换模型会重建索引，下载和移除操作均需确认。");
     modelPanel=new StackPanel{Spacing=12};Body.Children.Add(modelPanel);modelFingerprint="";UpdateModels();ComponentSettings();

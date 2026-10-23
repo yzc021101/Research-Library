@@ -73,11 +73,11 @@ public sealed partial class MainWindow {
   updatePanel.Children.Add(Card(Row(Text("当前版本 "+UpdateVersion,16),check)));
   string phase=S(updateState,"phase");var release=updateState["release"];
   if(phase is "available" or "ready" or "downloading" or "preparing"){
-   var actions=new StackPanel{Spacing=8,Orientation=Orientation.Horizontal};
-   actions.Children.Add(Button("更新说明",async()=>{await Windows.System.Launcher.LaunchUriAsync(new Uri(S(release,"release_url",Engine.ReleaseURL)));}));
-   if(phase=="available"){var b=Button("下载更新",()=>BeginUpdate("download"),true);Identify(b,"DownloadUpdate","下载更新");b.IsEnabled=!updateWorking;actions.Children.Add(b);}
-   if(phase=="ready"){var b=Button("安装并重启…",InstallUpdate,true);Identify(b,"InstallUpdate","安装并重启");b.IsEnabled=!updateWorking&&status["busy"]?.GetValue<bool>()!=true&&S(status["model_job"],"phase") is not ("starting" or "downloading" or "indexing" or "ready");actions.Children.Add(b);}
-   updatePanel.Children.Add(Card(Row(Text("新版本 "+S(release,"version"),16),actions)));
+   var buttons=new List<Button>();
+   buttons.Add(Button("更新说明",async()=>{await Windows.System.Launcher.LaunchUriAsync(new Uri(S(release,"release_url",Engine.ReleaseURL)));}));
+   if(phase=="available"){var b=Button("下载更新",()=>BeginUpdate("download"),true);Identify(b,"DownloadUpdate","下载更新");b.IsEnabled=!updateWorking;buttons.Add(b);}
+   if(phase=="ready"){var b=Button("安装并重启…",InstallUpdate,true);Identify(b,"InstallUpdate","安装并重启");b.IsEnabled=!updateWorking&&status["busy"]?.GetValue<bool>()!=true&&S(status["model_job"],"phase") is not ("starting" or "downloading" or "indexing" or "ready");buttons.Add(b);}
+   updatePanel.Children.Add(Card(Row(Text("新版本 "+S(release,"version"),16),AdaptiveLayout.Actions(buttons))));
   }
   if(phase is "downloading" or "verifying" or "preparing" or "prepared" or "ready")updatePanel.Children.Add(Button("查看更新进度",()=>{ShowUpdateProgress();return Task.CompletedTask;}));
   if(updateWorking){
