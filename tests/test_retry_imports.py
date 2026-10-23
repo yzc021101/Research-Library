@@ -12,11 +12,12 @@ class RetryTests(unittest.TestCase):
   self.lib=Library(lambda:{'source_folders':[str(INBOX)],'keep_snapshots':False,'search_mode':'keyword'})
   self.good=INBOX/'good.txt';self.bad=INBOX/'bad.txt';self.other=INBOX/'other.txt'
   for p in [self.good,self.bad,self.other]:p.write_text('ResearchRetryAnchor '+p.stem)
-  extract=self.lib.extract
-  def fail(path,doc):
+  import ingest_jobs
+  extract=ingest_jobs.extract
+  def fail(lib,path,doc):
    if path!=self.good:raise ValueError('temporary reader error')
-   return extract(path,doc)
-  with patch.object(self.lib,'extract',side_effect=fail):self.lib.sync()
+   return extract(lib,path,doc)
+  with patch.object(ingest_jobs,'extract',side_effect=fail):self.lib.sync()
  def tearDown(self):
   self.lib.db.close()
   for p in INBOX.glob('*'):p.unlink()

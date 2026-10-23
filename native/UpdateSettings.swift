@@ -19,7 +19,7 @@ import SwiftUI
         }
         progressWindow?.makeKeyAndOrderFront(nil)
     }
-    var current: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.6.11" }
+    var current: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.6.12" }
     var phase: String { state["phase"] as? String ?? "idle" }
     var release: [String: Any] { state["release"] as? [String: Any] ?? [:] }
     init(root: URL) {

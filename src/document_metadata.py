@@ -1,8 +1,9 @@
 """Conservative local cover metadata, with field-level evidence and null fallbacks."""
 import re
+from pdf_text import is_notice
 from datetime import date, datetime
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 GENERIC_TITLE = re.compile(r'^(?:Microsoft\s+)?(?:PowerPoint(?:\s+Presentation|\s*演示文稿)?|演示文稿\d*|Presentation\d*|Untitled|无标题)$', re.I)
 BRANDS = {
     '华泰研究': '华泰证券', '长江证券': '长江证券', '东北证券': '东北证券',
@@ -16,9 +17,10 @@ def cover_title(page):
         for line in block.get('lines', []):
             spans = [s for s in line['spans'] if s['text'].strip()]
             if not spans: continue
+            if abs(line.get('dir', (1, 0))[1]) > 0.1: continue
             value = ''.join(s['text'] for s in spans).strip()
             size = max(s['size'] for s in spans)
-            if size >= 18 and len(value) >= 4 and not re.search(r'免责声明|证券研究报告|内部参考|团队|研究所|行业研究|投资评级', value):
+            if not is_notice(value) and size >= 18 and len(value) >= 4 and not re.search(r'免责声明|证券研究报告|内部参考|团队|研究所|行业研究|投资评级', value):
                 lines.append((line['bbox'][1], size, value))
     if not lines: return None
     maximum = max(x[1] for x in lines)
@@ -79,7 +81,9 @@ def extract_metadata(path, pdf, cover_text=None):
     original=(embedded.get('title') or '').strip()
     title=original or path.stem
     fields={'title': {'source':'pdf_metadata' if original else 'filename','evidence':title}}
-    if len(pdf) and (not original or GENERIC_TITLE.fullmatch(original)):
+    if is_notice(title):
+        title=path.stem; fields['title']={'source':'filename','evidence':title}
+    if len(pdf) and (not original or GENERIC_TITLE.fullmatch(original) or is_notice(original)):
         candidate=cover_title(pdf[0])
         if candidate:
             title=candidate; fields['title']={'source':'cover_native_text','pdf_page':1,'evidence':candidate}

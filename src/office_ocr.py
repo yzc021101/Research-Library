@@ -146,6 +146,13 @@ def run_tesseract(command, event, timeout=90):
             except subprocess.TimeoutExpired: child.kill(); child.communicate()
 
 def recognize(picture, event=None):
+    from cache_lock import locked
+    policy = json.dumps([VERSION, picture.crop, picture.rotation, picture.flip_h, picture.flip_v, 'eng+chi_sim'])
+    key = hashlib.sha256(picture.blob + policy.encode()).hexdigest()
+    with locked('ocr-'+key, event):
+        return _recognize(picture, event)
+
+def _recognize(picture, event=None):
     cancelled(event)
     from office_vector import inspect_emf
     emf = inspect_emf(picture.blob)

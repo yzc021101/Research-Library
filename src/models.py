@@ -55,8 +55,9 @@ def create_embedder(model_id, allow_download=False):
     import onnxruntime
     onnxruntime.disable_telemetry_events()
     from fastembed import TextEmbedding
+    from resource_budget import embedding_threads
     raw = TextEmbedding(model_name=model_id, cache_dir=str(model_cache(model_id)),
-                        local_files_only=not allow_download, threads=2)
+                        local_files_only=not allow_download, threads=embedding_threads())
     return EmbeddingAdapter(model_id, raw)
 
 class EmbeddingAdapter:

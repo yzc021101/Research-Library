@@ -2,7 +2,7 @@ from paths import ROOT, INBOX, DATA, MODEL, inside
 from models import available, spec, table_schema
 from embedding_process import EmbeddingProcess as create_embedder
 from document_metadata import extract_metadata, SCHEMA_VERSION
-from document_formats import SUPPORTED, LEGACY, PARSER_VERSION, extract_document
+from document_formats import SUPPORTED, LEGACY, parser_version, extract_document
 from table_content import display_content
 from spooled import Spool
 import csv
@@ -80,6 +80,8 @@ class Library(StorageMixin):
     def __init__(self, settings_provider=None):
         self.settings_provider = settings_provider
         self.lock = threading.RLock()
+        self.sync_lock = threading.Lock()
+        self.model_lock = threading.RLock()
         self.progress_lock = threading.Lock()
         self.sync_progress = {'stage': 'idle'}
         self.sync_cancel = threading.Event()
@@ -87,6 +89,8 @@ class Library(StorageMixin):
         self.db.row_factory = sqlite3.Row
         self.db.executescript('''
         PRAGMA foreign_keys=ON;
+        CREATE TABLE IF NOT EXISTS source_fingerprints(path TEXT PRIMARY KEY, fingerprint TEXT, sha TEXT);
+        CREATE TABLE IF NOT EXISTS embedding_cache(model TEXT, hash TEXT, vector BLOB, PRIMARY KEY(model,hash));
         CREATE TABLE IF NOT EXISTS library_config(key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS documents(
             doc_id TEXT PRIMARY KEY, sha256 TEXT, snapshot TEXT, metadata TEXT,
@@ -100,6 +104,7 @@ class Library(StorageMixin):
         CREATE TABLE IF NOT EXISTS chunks(
             chunk_id TEXT PRIMARY KEY, doc_id TEXT, pdf_page INTEGER,
             line_start INTEGER, line_end INTEGER, text TEXT);
+        CREATE INDEX IF NOT EXISTS chunks_document ON chunks(doc_id);
         CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
             chunk_id UNINDEXED, body, tokenize='unicode61');
         ''')
@@ -115,17 +120,6 @@ class Library(StorageMixin):
                     self.db.execute("DELETE FROM sources WHERE path=?", (source[0],))
                 else: self.db.execute("UPDATE sources SET path=? WHERE path=?", (absolute, source[0]))
         self.db.commit()
-        if not self.db.execute("SELECT 1 FROM library_config WHERE key='quality_audit_v1'").fetchone():
-            # A whole document without text cannot answer a search. Empty pages
-            # within an otherwise readable document may simply be intentional.
-            empty = self.db.execute("SELECT doc_id FROM pages GROUP BY doc_id HAVING SUM(length(trim(text)))=0").fetchall()
-            for item in empty:
-                row = self.db.execute('SELECT metadata FROM documents WHERE doc_id=?', (item[0],)).fetchone()
-                if row:
-                    metadata = json.loads(row[0]);metadata['partial'] = True
-                    metadata.setdefault('extraction_warnings', []).append('部分入库：未提取到可检索文字；请核对原文件或安装 OCR 组件后重试。')
-                    self.db.execute('UPDATE documents SET metadata=? WHERE doc_id=?', (json.dumps(metadata), item[0]))
-            self.db.execute("INSERT INTO library_config VALUES('quality_audit_v1','complete')")
         # Older releases labelled incomplete documents as ready. Migrate status
         # from recorded metadata without reparsing or hiding searchable content.
         for row in self.db.execute("SELECT s.path,d.metadata FROM sources s JOIN documents d USING(doc_id) WHERE s.state='ready'").fetchall():
@@ -177,6 +171,8 @@ class Library(StorageMixin):
     def release_idle_model(self, idle_seconds=300):
         # Never race an active search/index or wait on a long import.
         if not self.lock.acquire(blocking=False): return False
+        if not self.model_lock.acquire(blocking=False):
+            self.lock.release(); return False
         try:
             if self._embedder is None or time.monotonic()-self._embedding_last_used < idle_seconds: return False
             if hasattr(self._embedder, "close"): self._embedder.close()
@@ -184,6 +180,7 @@ class Library(StorageMixin):
             gc.collect()
             return True
         finally:
+            self.model_lock.release()
             self.lock.release()
 
     def embedder(self):
@@ -274,17 +271,20 @@ class Library(StorageMixin):
                                      check=True, capture_output=True, timeout=90)
                 layouts = res.stdout.decode("utf-8", errors="replace").split("\f")
             pages, chunks = Spool(), Spool()
-            ocr_errors = []
+            ocr_errors, usage_notices = [], []
             for i, page in enumerate(pdf):
                 from office_ocr import cancelled
                 cancelled(self.sync_cancel)
                 text = layouts[i].strip() if i < len(layouts) else page.get_text(sort=True).strip()
+                from pdf_text import search_text
+                text, notices = search_text(page, text)
+                usage_notices.extend(notices)
                 native = text
                 method = "pdftotext_layout" if layouts else "pymupdf_text"
                 image_area = max((pymupdf.Rect(im["bbox"]).get_area() for im in page.get_image_info()), default=0)
                 review = False
                 ocr_regions = []
-                if len(native) < 100 or image_area > page.rect.get_area() * 0.25:
+                if (len(native) < 100 and image_area > 0) or image_area > page.rect.get_area() * 0.25:
                     ocr, errors, ocr_regions = self.ocr(page, doc_id, i+1)
                     ocr_errors.extend(errors)
                     review = True
@@ -299,150 +299,31 @@ class Library(StorageMixin):
                     json.dumps({'kind': 'pdf_page', 'pdf_page': i+1, 'label': f'PDF 第 {i+1} 页', 'ocr_regions': ocr_regions})))
                 for j, (part, start, end) in enumerate(split_text(text)):
                     chunks.append((f"{doc_id}:p{i+1}:c{j+1}", doc_id, i+1, start, end, part))
-            if not chunks: ocr_errors.append('未提取到可检索文字；请核对原文件，图片文字可安装 OCR 组件后重试。')
             meta = self.metadata(path, pdf, pages[0][3] if pages else "")
             from pdf_ocr import VERSION as OCR_VERSION
+            from pdf_text import VERSION as TEXT_VERSION
+            meta.update(pdf_text_version=TEXT_VERSION, usage_notices=list(dict.fromkeys(usage_notices)), no_searchable_text=not bool(chunks))
             meta['pdf_ocr_version'] = OCR_VERSION
             meta['partial'] = bool(ocr_errors)
             if ocr_errors: meta['extraction_warnings'] = ['部分入库：' + e for e in ocr_errors]
-            if not any(p[3].strip() for p in pages):
+            if not any(p[3].strip() for p in pages) and ocr_errors:
                 raise ValueError('未提取到可检索文字；' + '；'.join(ocr_errors[:3]))
             return meta, pages, chunks
 
     def sync(self, prepared=False, retry=False, path=None):
-        with self.lock:
+        with self.sync_lock:
             if not prepared: self.sync_cancel.clear()
             try:
-                return self._sync(retry=retry, path=path)
+                from ingestion import run
+                return run(self, retry=retry, path=path)
             finally:
                 self.set_progress(stage='cancelled' if self.sync_cancel.is_set() else 'idle')
-
-    def _sync(self, retry=False, path=None):
-        with self.lock:
-            # Retry recoverable stylesheet failures first when upgrading the reader.
-            style_failures = {r[0] for r in self.db.execute("SELECT path FROM sources WHERE state='failed' AND error LIKE '%stylesheet%'")}
-            files = sorted(self.files(), key=lambda p: str(p.absolute()) not in style_failures)
-            if retry:
-                failed = {row[0] for row in self.db.execute("SELECT path FROM sources WHERE state IN ('failed','partial')")}
-                if path is not None:
-                    if not isinstance(path, str) or path not in failed: raise ValueError("请选择导入失败或部分入库的文件")
-                    failed = {path}
-                files = [p for p in files if str(p.absolute()) in failed]
-                active = {str(p.absolute()) for p in files}
-                for missing in failed - active:
-                    self.db.execute("UPDATE sources SET state='missing',checked_at=? WHERE path=?", (now(), missing))
-                self.db.commit()
-            seen, results = set(), []
-            from office_ocr import cancelled
-            for file_index, path in enumerate(files, 1):
-                if self.sync_cancel.is_set(): break
-                self.set_progress(stage='reading', file=path.name, file_index=file_index, file_total=len(files), image=None, location=None)
-                rel = str(path.absolute()); seen.add(rel)
-                try:
-                    inside(path, self.source_root(path))
-                    sha = digest(path)
-                    identity = sha if path.suffix.lower() == '.pdf' else hashlib.sha256((sha + path.suffix.lower()).encode()).hexdigest()
-                    doc_id = "d_" + identity[:24]
-                    exists = self.db.execute("SELECT metadata FROM documents WHERE doc_id=?", (doc_id,)).fetchone()
-                    rebuild = bool(exists and path.suffix.lower() != '.pdf' and (json.loads(exists[0]).get('parser_version') != PARSER_VERSION))
-                    if exists:
-                        old_metadata = json.loads(exists[0])
-                        if retry and old_metadata.get('partial'): rebuild = True
-                        if path.suffix.lower() == '.pdf' and old_metadata.get('partial'):
-                            from pdf_ocr import VERSION as OCR_VERSION
-                            rebuild = rebuild or old_metadata.get('pdf_ocr_version') != OCR_VERSION
-                        if path.suffix.lower() != '.pdf' and old_metadata.get('partial') and old_metadata.get('large_file_mode', False) != self.settings().get('large_file_mode', False):
-                            rebuild = True
-                    if exists and not rebuild and path.suffix.lower() in {'.docx', '.pptx', '.xlsx'} | LEGACY:
-                        locations = self.db.execute('SELECT location FROM pages WHERE doc_id=?', (doc_id,)).fetchall()
-                        for row in locations:
-                            relative = json.loads(row[0] or '{}').get('image_path')
-                            if relative and not inside(ROOT / relative, ROOT / 'cache/office-ocr').is_file():
-                                rebuild = True
-                                break
-                    if exists and not rebuild:
-                        old_meta = json.loads(exists[0])
-                        if path.with_suffix(".metadata.json").exists() or old_meta.get("metadata_schema_version", 0) < SCHEMA_VERSION:
-                            cover = self.db.execute("SELECT text FROM pages WHERE doc_id=? AND pdf_page=1", (doc_id,)).fetchone()
-                            if path.suffix.lower() == '.pdf':
-                                with pymupdf.open(path) as pdf: meta = self.metadata(path, pdf, cover[0] if cover else None)
-                            else:
-                                meta, _ = extract_document(path, self.set_progress, self.sync_cancel, self.settings())
-                                meta = self.metadata_overrides(path, meta)
-                            # Preserve existing manually supplied nonempty fields during an upgrade.
-                            if not path.with_suffix(".metadata.json").exists():
-                                for key in ("institution", "published_date", "source_type", "companies"):
-                                    if old_meta.get(key) and old_meta[key] != "unclassified":
-                                        meta[key] = old_meta[key]
-                                        meta["metadata_provenance"]["fields"][key] = {"source": "preserved_existing_metadata", "evidence": old_meta[key]}
-                                        if key == "published_date":
-                                            meta["publication_date_display"] = old_meta[key]
-                                            meta["publication_date_precision"] = old_meta.get("publication_date_precision") or "day"
-                            self.db.execute("UPDATE documents SET metadata=? WHERE doc_id=?", (json.dumps(meta), doc_id))
-                        if self.settings().get('keep_snapshots', False):
-                            saved = self.db.execute('SELECT snapshot FROM documents WHERE doc_id=?', (doc_id,)).fetchone()[0]
-                            if not saved or not (ROOT/saved).is_file():
-                                saved = self.snapshot_file(path, sha)
-                                self.db.execute('UPDATE documents SET snapshot=? WHERE doc_id=?', (saved, doc_id))
-                        action = "unchanged_or_duplicate"
-                    else:
-                        meta, pages, chunks = self.extract(path, doc_id)
-                        cancelled(self.sync_cancel)
-                        reuse_vectors = False
-                        if rebuild and available(self.embedding["model"]):
-                            previous = [tuple(row) for row in self.db.execute(
-                                "SELECT chunk_id,doc_id,pdf_page,line_start,line_end,text FROM chunks WHERE doc_id=?", (doc_id,))]
-                            if sorted(previous) == sorted(chunks):
-                                ids = self.vector_table().search().where(f"doc_id = '{doc_id}'").select(['chunk_id']).limit(len(chunks)+1).to_list()
-                                reuse_vectors = len(ids) == len(chunks) and {x['chunk_id'] for x in ids} == {c[0] for c in chunks}
-                        if available(self.embedding["model"]) and not reuse_vectors:
-                            self.set_progress(stage='embedding')
-                            table = self.vector_table()
-                            table.delete(f"doc_id = '{doc_id}'")
-                            for offset in range(0, len(chunks), 64):
-                                cancelled(self.sync_cancel)
-                                batch = chunks[offset:offset+64]
-                                vectors = self.embedder().passage_embed([c[5] for c in batch], batch_size=16)
-                                table.add([{"chunk_id": c[0], "doc_id": doc_id, "vector": v.tolist()}
-                                           for c, v in zip(batch, vectors)])
-                        snapshot = self.snapshot_file(path, sha)
-                        if digest(path) != sha:
-                            raise RuntimeError("File changed during indexing; retry after copy finishes")
-                        if rebuild:
-                            self.db.execute('DELETE FROM chunks_fts WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE doc_id=?)', (doc_id,))
-                            self.db.execute('DELETE FROM chunks WHERE doc_id=?', (doc_id,))
-                            self.db.execute('DELETE FROM pages WHERE doc_id=?', (doc_id,))
-                            self.db.execute('DELETE FROM documents WHERE doc_id=?', (doc_id,))
-                        self.db.execute("INSERT INTO documents VALUES(?,?,?,?,?,?)",
-                            (doc_id, sha, snapshot, json.dumps(meta), len(pages), now()))
-                        self.db.executemany("INSERT INTO pages VALUES(?,?,?,?,?,?,?,?)", pages)
-                        self.db.executemany("INSERT INTO chunks VALUES(?,?,?,?,?,?)", chunks)
-                        self.db.executemany("INSERT INTO chunks_fts VALUES(?,?)", ((c[0], " ".join(tokens(c[5]))) for c in chunks))
-                        action = "indexed"
-                    current_meta = json.loads(self.db.execute('SELECT metadata FROM documents WHERE doc_id=?', (doc_id,)).fetchone()[0])
-                    note = '；'.join(current_meta.get('extraction_warnings', [])) if current_meta.get('partial') else None
-                    self.db.execute("INSERT OR REPLACE INTO sources VALUES(?,?,?,?,?)", (rel, doc_id, "partial" if current_meta.get('partial') else "ready", note, now()))
-                    self.db.commit()
-                    results.append({"file": rel, "doc_id": doc_id, "action": action})
-                except InterruptedError:
-                    self.db.rollback()
-                    break
-                except Exception as exc:
-                    self.db.rollback()
-                    self.db.execute("INSERT OR REPLACE INTO sources VALUES(?,?,?,?,?)", (rel, None, "failed", str(exc), now()))
-                    self.db.commit()
-                    results.append({"file": rel, "action": "failed", "error": str(exc)})
-            for row in self.db.execute("SELECT path FROM sources").fetchall():
-                if not retry and not self.sync_cancel.is_set() and row[0] not in seen:
-                    self.db.execute("UPDATE sources SET state='missing',checked_at=? WHERE path=?", (now(), row[0]))
-            self.db.commit()
-            return {"results": results, "cancelled": self.sync_cancel.is_set(), "status": self.status()}
 
     def status(self):
         with self.lock:
             sources = [dict(x) for x in self.db.execute("SELECT * FROM sources ORDER BY path")]
             docs = self.active_docs()
-            return {"software_license": "AGPL-3.0-only", "source_code_url": "https://github.com/yzc021101/Research-Library/tree/v0.6.11", "root": str(ROOT), "inbox": str(INBOX), "active_documents": len(docs),
+            return {"software_license": "AGPL-3.0-only", "source_code_url": "https://github.com/yzc021101/Research-Library/tree/v0.6.12", "root": str(ROOT), "inbox": str(INBOX), "active_documents": len(docs),
                     "supported_formats": sorted(SUPPORTED),
                     "search_suggestions": search_suggestions(docs.values()),
                     "stored_versions": self.db.execute("SELECT count(*) FROM documents").fetchone()[0],
@@ -514,7 +395,8 @@ class Library(StorageMixin):
                     WHERE chunks_fts MATCH ? AND c.doc_id IN ({ids_sql})
                     ORDER BY lexical_score LIMIT 60''', (expression,)).fetchall()
             if mode != "keyword":
-                q = next(self.embedder().query_embed(query)).tolist()
+                with self.model_lock:
+                    q = next(self.embedder().query_embed(query)).tolist()
                 sem = self.vector_table().search(q).distance_type("cosine").where(f"doc_id IN ({ids_sql})").limit(60).to_list()
             for rank, row in enumerate(lex, 1):
                 candidates[row["chunk_id"]] = {"rrf": 1/(60+rank), "keyword_rank": rank}

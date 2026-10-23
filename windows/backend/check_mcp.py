@@ -13,7 +13,12 @@ async def check():
     if not load_settings()["app_managed"] or not (ROOT/"data/service.json").exists():
         raise RuntimeError("请先打开 App 并启动本地服务。")
     command = worker_command("server")
-    params = StdioServerParameters(command=command[0], args=command[1:], cwd=str(ROOT), env=dict(os.environ))
+    if os.name=='nt' and getattr(__import__('sys'), 'frozen', False):
+        from runtime_pin import write_windows_launcher
+        command=[os.environ.get('COMSPEC','cmd.exe'), '/d', '/c', str(write_windows_launcher())]
+    env=dict(os.environ)
+    env["RESEARCH_LIBRARY_ENGINE"]=__import__("sys").executable
+    params = StdioServerParameters(command=command[0], args=command[1:], cwd=str(ROOT), env=env)
     with open(ROOT/"logs/mcp-check-server.stderr.log", "w") as err:
         async with stdio_client(params, errlog=err) as (reader, writer):
             async with ClientSession(reader, writer, read_timeout_seconds=timedelta(seconds=20)) as session:

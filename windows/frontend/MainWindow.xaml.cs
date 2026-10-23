@@ -290,8 +290,39 @@ public sealed partial class MainWindow : Window {
  void PersistUI(){Directory.CreateDirectory(Path.GetDirectoryName(uiFile)!);File.WriteAllText(uiFile,ui.ToJsonString());}
  async Task Onboarding(){
   int step=0;bool actionRunning=false;
+  string onboardingModel="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2";
+  var componentsStatus=Text("",14,true);var componentProgress=new ProgressBar{IsIndeterminate=true,Visibility=Visibility.Collapsed};
+  Button? modelInstall=null,ocrInstall=null,startComponents=null,cancelComponents=null;
+  var modelSize=Text("",14,true);var ocrSize=Text("",14,true);
+  void ComponentState(){
+   var job=status["model_job"];var cj=status["components"]?["job"];var items=status["components"]?["items"]?.AsArray();
+   var selected=(status["models"]?.AsArray()??new()).FirstOrDefault(x=>S(x,"id")==onboardingModel);
+   var ocr=items?.FirstOrDefault(x=>S(x,"id")=="ocr");
+   bool modelReady=selected?["downloaded"]?.GetValue<bool>()==true;
+   bool ocrReady=ocr?["installed"]?.GetValue<bool>()==true||ocr?["external"]?.GetValue<bool>()==true;
+   string mp=S(job,"phase"),cp=S(cj,"phase");
+   bool modelBusy=new[]{"starting","downloading","indexing","ready"}.Contains(mp),componentBusy=new[]{"downloading","installing"}.Contains(cp);
+   bool blocked=actionRunning||status["busy"]?.GetValue<bool>()==true||modelBusy||componentBusy||status.Count==0;
+   if(modelInstall!=null){modelInstall.IsEnabled=!blocked&&!modelReady;modelInstall.Content=modelReady?"模型已安装":"下载并安装模型";}
+   if(ocrInstall!=null){ocrInstall.IsEnabled=!blocked&&!ocrReady&&ocr?["url"]!=null;ocrInstall.Content=ocrReady?"OCR 已就绪":"下载并安装 OCR";}
+   double gb=selected?["download_gb"]?.GetValue<double>()??.22;
+   modelSize.Text=modelReady?"已安装，无需重复下载":$"下载约 {gb:F2} GB · 预留 {gb*2:F2} GB 空间";
+   ocrSize.Text=ocrReady?"已就绪，无需重复安装":$"下载 {Size(ocr?["download_bytes"])} · 安装后 {Size(ocr?["expanded_bytes"])}";
+   componentsStatus.Text="";
+   if(startComponents!=null)startComponents.Visibility=status.Count==0?Visibility.Visible:Visibility.Collapsed;
+   if(cancelComponents!=null)cancelComponents.Visibility=modelBusy||componentBusy?Visibility.Visible:Visibility.Collapsed;
+   if(modelBusy)componentsStatus.Text+="\n模型："+(mp=="indexing"?"正在建立索引":"正在下载并准备");
+   if(componentBusy)componentsStatus.Text+="\nOCR："+(cp=="downloading"?$"正在下载 {Size(cj?["done"])}/{Size(cj?["total"])}":"正在校验和安装");
+   if(status["busy"]?.GetValue<bool>()==true)componentsStatus.Text+="\n正在同步资料，完成后即可安装组件。";
+   componentsStatus.Text+="\n"+S(job,"error")+" "+S(cj,"error");
+   componentProgress.Visibility=modelBusy||componentBusy?Visibility.Visible:Visibility.Collapsed;
+   componentProgress.IsIndeterminate=cp!="downloading";
+   if(cp=="downloading"){componentProgress.Maximum=Math.Max(1,cj?["total"]?.GetValue<double>()??1);componentProgress.Value=cj?["done"]?.GetValue<double>()??0;}
+  }
+  var onboardingTimer=new DispatcherTimer{Interval=TimeSpan.FromSeconds(2)};
+  onboardingTimer.Tick+=(_,_)=>{if(step==0)ComponentState();};
   var panel=Stack();var feedback=Text("",14,true);
-  var scroll=new ScrollViewer{Content=panel,Height=Math.Max(100,Math.Min(420,Shell.ActualHeight-230)),HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled};
+  var scroll=new ScrollViewer{Content=panel,Height=Math.Max(100,Math.Min(520,Shell.ActualHeight-230)),HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled};
   var dialog=new ContentDialog{XamlRoot=Shell.XamlRoot,Content=scroll,CloseButtonText="稍后配置",DefaultButton=ContentDialogButton.Primary};
   Identify(dialog,"OnboardingDialog","MCP 接入引导");
   Button Action(string title,Func<Task> action){
@@ -304,16 +335,29 @@ public sealed partial class MainWindow : Window {
    };return button;
   }
   void ShowStep(){
-   dialog.Title=step switch{0=>"准备你的资料库",1=>"连接 AI 客户端",_=>"验证并开始使用"};
-   dialog.PrimaryButtonText=step==2?"完成":"下一步";dialog.SecondaryButtonText=step>0?"上一步":"";
-   panel.Children.Clear();feedback.Text="";panel.Children.Add(Text($"第 {step+1} 步，共 3 步",14,true));
+   dialog.Title=step switch{0=>"选择模型与 OCR",1=>"准备你的资料库",2=>"连接 AI 客户端",_=>"验证并开始使用"};
+   dialog.PrimaryButtonText=step==3?"完成":"下一步";dialog.SecondaryButtonText=step>0?"上一步":"";
+   panel.Children.Clear();feedback.Text="";panel.Children.Add(Text($"第 {step+1} 步，共 4 步",14,true));
    if(step==0){
+    panel.Children.Add(Text("选择是否安装以下可选组件。点击安装才会下载，也可以直接下一步，稍后从设置补装。",15,true));
+    var models=new ComboBox{HorizontalAlignment=HorizontalAlignment.Stretch};
+    foreach(var item in status["models"]?.AsArray()??new()){var option=new ComboBoxItem{Content=S(item,"name"),Tag=S(item,"id")};models.Items.Add(option);if(S(item,"id")==onboardingModel)models.SelectedItem=option;}
+    models.SelectionChanged+=(_,_)=>{if(models.SelectedItem is ComboBoxItem choice)onboardingModel=choice.Tag.ToString()!;ComponentState();};
+    modelInstall=Action("下载并安装模型",async()=>{await engine.Request("/models/switch",new{model=onboardingModel});await Refresh(false);ComponentState();});
+    ocrInstall=Action("下载并安装 OCR",async()=>{await engine.Request("/components/install",new{id="ocr"});await Refresh(false);ComponentState();});
+    panel.Children.Add(Card(Stack(Text("向量模型 · 推荐 MiniLM",17),Text("按语义检索，支持中文和多语言。未安装时仍可使用关键词检索。",14,true),models,modelSize,modelInstall)));
+    panel.Children.Add(Card(Stack(Text("图片文字识别（OCR）",17),Text("识别扫描文件及内嵌图片。普通文本和 Office 正文不依赖此组件。",14,true),ocrSize,ocrInstall)));
+    panel.Children.Add(componentsStatus);panel.Children.Add(componentProgress);
+    startComponents=Action("启动并检查组件",async()=>{await engine.Start();await Refresh(false);ComponentState();});panel.Children.Add(startComponents);
+    cancelComponents=Action("取消当前下载任务",async()=>{await engine.Request("/models/cancel",new{});await engine.Request("/components/cancel",new{});await Refresh(false);ComponentState();});panel.Children.Add(cancelComponents);
+    ComponentState();
+   }else if(step==1){
     panel.Children.Add(Text("让 AI 检索本机报告、文档和表格，并取回原文及来源位置。",15,true));
     var count=Text($"{settings["source_folders"]?.AsArray().Count??0} 个文件夹",15,true);
     panel.Children.Add(Card(Stack(Row(Text("资料来源",16),count),Action("添加资料文件夹…",async()=>{await AddFolder();count.Text=$"{settings["source_folders"]?.AsArray().Count??0} 个文件夹";}))));
     panel.Children.Add(Text("可以稍后添加。原文件只读，索引和模型保存在资料库目录中。",14,true));
     panel.Children.Add(Action("启动并检查服务",async()=>{await engine.Start();await Refresh(false);feedback.Text="本地服务已准备好。";}));
-   }else if(step==1){
+   }else if(step==2){
     var clients=new ComboBox{ItemsSource=new[]{"Codex","WorkBuddy","Claude Code","Cursor","VS Code","其他客户端"},SelectedItem=client,HorizontalAlignment=HorizontalAlignment.Stretch};
     var destination=Text(MCPConfiguration.Destination(client),14,true);
     var code=new TextBox{AcceptsReturn=true,Text=MCPConfiguration.Create(client),IsReadOnly=true,TextWrapping=TextWrapping.Wrap,FontFamily=new FontFamily("Cascadia Mono"),FontSize=13,MinHeight=120,MaxHeight=200};
@@ -334,12 +378,12 @@ public sealed partial class MainWindow : Window {
    }
    panel.Children.Add(feedback);scroll.ChangeView(null,0,null,true);
   }
-  dialog.PrimaryButtonClick+=(_,args)=>{if(step<2){args.Cancel=true;step++;ShowStep();}};
+  dialog.PrimaryButtonClick+=(_,args)=>{if(step<3){args.Cancel=true;step++;ShowStep();}};
   dialog.SecondaryButtonClick+=(_,args)=>{args.Cancel=true;if(step>0){step--;ShowStep();}};
   dialog.Closing+=(_,args)=>{if(actionRunning)args.Cancel=true;};
-  SizeChangedEventHandler resize=(_,_)=>scroll.Height=Math.Max(100,Math.Min(420,Shell.ActualHeight-230));Shell.SizeChanged+=resize;
+  SizeChangedEventHandler resize=(_,_)=>scroll.Height=Math.Max(100,Math.Min(520,Shell.ActualHeight-230));Shell.SizeChanged+=resize;
   ShowStep();ContentDialogResult result;
-  try{result=await dialog.ShowAsync();}finally{Shell.SizeChanged-=resize;}
+  try{onboardingTimer.Start();result=await dialog.ShowAsync();}finally{onboardingTimer.Stop();Shell.SizeChanged-=resize;}
   ui["onboarding_done"]=true;PersistUI();
   if(result==ContentDialogResult.Primary)await Go("mcp");
  }

@@ -6,7 +6,7 @@ namespace ResearchLibrary;
 public sealed partial class MainWindow {
  StackPanel? importPanel;
  string importFingerprint="";
- bool failedImportsExpanded=true,partialImportsExpanded=true,readyImportsExpanded=false;
+ bool failedImportsExpanded=true,partialImportsExpanded=true,readyImportsExpanded=false,skippedImportsExpanded=false;
  async Task RetryImports(string? path=null){
   // Button already runs this action inside Guard; nesting it would discard every click.
   if(status["busy"]?.GetValue<bool>()==true)return;
@@ -28,9 +28,10 @@ public sealed partial class MainWindow {
   importPanel.Children.Add(ImportGroup(records.Where(x=>S(x,"state")=="failed").ToArray(),true));
   importPanel.Children.Add(ImportGroup(records.Where(x=>S(x,"state")=="partial").ToArray(),true,true));
   importPanel.Children.Add(ImportGroup(records.Where(x=>S(x,"state")=="ready").ToArray(),false));
+  importPanel.Children.Add(ImportGroup(records.Where(x=>S(x,"state")=="skipped").ToArray(),false,false,true));
  }
- Expander ImportGroup(JsonNode?[] records,bool failed,bool partial=false){
-  var heading=Text($"{(partial?"部分入库":failed?"导入失败":"已入库")} · {records.Length} 份",16);
+ Expander ImportGroup(JsonNode?[] records,bool failed,bool partial=false,bool skipped=false){
+  var heading=Text($"{(skipped?"已跳过：无可检索文字":partial?"部分入库":failed?"导入失败":"已入库")} · {records.Length} 份",16);
   heading.IsTextSelectionEnabled=false;
   var header=new StackPanel{Orientation=Orientation.Horizontal,Spacing=10};
   var icon=new FontIcon{Glyph=failed?"\uE783":"\uE73E",FontSize=18};
@@ -38,7 +39,7 @@ public sealed partial class MainWindow {
   header.Children.Add(icon);header.Children.Add(heading);
   var body=new StackPanel{Spacing=12};
   var group=new Expander{Header=header,Content=body,HorizontalAlignment=HorizontalAlignment.Stretch,HorizontalContentAlignment=HorizontalAlignment.Stretch};
-  Identify(group,partial?"PartialImports":failed?"FailedImports":"ReadyImports",$"{(partial?"部分入库":failed?"导入失败":"已入库")}，{records.Length} 份");
+  Identify(group,skipped?"SkippedImports":partial?"PartialImports":failed?"FailedImports":"ReadyImports",$"{(skipped?"已跳过：无可检索文字":partial?"部分入库":failed?"导入失败":"已入库")}，{records.Length} 份");
   bool populated=false;
   void Populate(){
    if(populated)return;populated=true;
@@ -57,9 +58,9 @@ public sealed partial class MainWindow {
     body.Children.Add(Card(Row(details,actions)));
    }
   }
-  group.Expanding+=(_,_)=>{if(partial)partialImportsExpanded=true;else if(failed)failedImportsExpanded=true;else readyImportsExpanded=true;Populate();};
-  group.Collapsed+=(_,_)=>{if(partial)partialImportsExpanded=false;else if(failed)failedImportsExpanded=false;else readyImportsExpanded=false;};
-  group.IsExpanded=partial?partialImportsExpanded:failed?failedImportsExpanded:readyImportsExpanded;
+  group.Expanding+=(_,_)=>{if(skipped)skippedImportsExpanded=true;else if(partial)partialImportsExpanded=true;else if(failed)failedImportsExpanded=true;else readyImportsExpanded=true;Populate();};
+  group.Collapsed+=(_,_)=>{if(skipped)skippedImportsExpanded=false;else if(partial)partialImportsExpanded=false;else if(failed)failedImportsExpanded=false;else readyImportsExpanded=false;};
+  group.IsExpanded=skipped?skippedImportsExpanded:partial?partialImportsExpanded:failed?failedImportsExpanded:readyImportsExpanded;
   if(group.IsExpanded)Populate();
   return group;
  }

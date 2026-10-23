@@ -73,10 +73,11 @@ public static class MCPConfiguration {
  public static string Server=>Path.Combine(Engine.Root,"src","server.py");
  public static string Create(string client){
   if(Engine.Packaged){
-   string command=Engine.Runtime;
-   if(client=="Codex")return $"[mcp_servers.{Name}]\ncommand = '{command}'\nargs = ['server']\nstartup_timeout_sec = 180\ntool_timeout_sec = 180\n\n[mcp_servers.{Name}.env]\nRESEARCH_LIBRARY_ROOT = '{Engine.Root}'\n";
-   if(client=="Claude Code")return $"claude mcp add --transport stdio --scope user --env RESEARCH_LIBRARY_ROOT=\"{Engine.Root}\" {Name} -- \"{command}\" server";
-   var packagedServer=new JsonObject{["command"]=command,["args"]=new JsonArray("server"),["env"]=new JsonObject{["RESEARCH_LIBRARY_ROOT"]=Engine.Root}};
+   string command=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"cmd.exe");
+   string launcher=Path.Combine(Engine.Root,"run-mcp.cmd");
+   if(client=="Codex")return $"[mcp_servers.{Name}]\ncommand = '{command}'\nargs = ['/d', '/c', '{launcher}']\nstartup_timeout_sec = 180\ntool_timeout_sec = 180\n\n[mcp_servers.{Name}.env]\nRESEARCH_LIBRARY_ROOT = '{Engine.Root}'\nRESEARCH_LIBRARY_ENGINE = '{Engine.Runtime}'\n";
+   if(client=="Claude Code")return $"claude mcp add --transport stdio --scope user --env RESEARCH_LIBRARY_ROOT=\"{Engine.Root}\" --env RESEARCH_LIBRARY_ENGINE=\"{Engine.Runtime}\" {Name} -- \"{command}\" /d /c \"{launcher}\"";
+   var packagedServer=new JsonObject{["command"]=command,["args"]=new JsonArray("/d","/c",launcher),["env"]=new JsonObject{["RESEARCH_LIBRARY_ROOT"]=Engine.Root,["RESEARCH_LIBRARY_ENGINE"]=Engine.Runtime}};
    if(client=="VS Code")packagedServer["type"]="stdio";
    return new JsonObject{[client=="VS Code"?"servers":"mcpServers"]=new JsonObject{[Name]=packagedServer}}.ToJsonString(new JsonSerializerOptions{WriteIndented=true});
   }

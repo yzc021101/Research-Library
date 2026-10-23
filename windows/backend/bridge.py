@@ -16,7 +16,15 @@ class BackendProxy:
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             raise RuntimeError(json.loads(exc.read()).get("error", str(exc))) from exc
+        except TimeoutError as exc:
+            raise RuntimeError("资料库响应超时，可能正在建立索引；请先查看 library_status 后重试。") from exc
+        except LookupError as exc:
+            if 'encoding' in str(exc):
+                raise RuntimeError("MCP 连接的运行环境已失效，请在 AI 客户端重新连接 research_library。") from exc
+            raise
         except urllib.error.URLError as exc:
+            if isinstance(exc.reason, TimeoutError):
+                raise RuntimeError("资料库响应超时，请查看索引进度后重试。") from exc
             if isinstance(exc.reason, PermissionError):
                 raise RuntimeError("当前调用环境禁止连接本机服务；需要允许本机连接，这不表示资料库服务已停止。") from exc
             raise RuntimeError("本地资料库服务连接失败。请检查 App 的运行状态。") from exc

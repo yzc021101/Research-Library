@@ -3,7 +3,7 @@ from pathlib import Path
 import os, sys, json
 import numpy as np
 lab=Path(__file__).resolve().parents[1];import tempfile
-root=Path(tempfile.mkdtemp(prefix='vector-upgrade-',dir=lab/'results/tables-0.6.2'))
+root=Path(tempfile.mkdtemp(prefix='vector-upgrade-'))
 os.environ['RESEARCH_LIBRARY_ROOT']=str(root);sys.path.insert(0,str(lab/'src'))
 import library
 from library import Library
@@ -14,6 +14,8 @@ lib.sync();doc=next(iter(lib.active_docs()));table=lib.vector_table()
 chunks=lib.db.execute('SELECT chunk_id FROM chunks WHERE doc_id=?',(doc,)).fetchall()
 table.add([{'chunk_id':r[0],'doc_id':doc,'vector':[.1]*384} for r in chunks])
 library.available=lambda _:True
+import ingestion
+ingestion.available=lambda _:True
 class FakeEmbedder:
     calls=0
     def passage_embed(self, texts, batch_size):

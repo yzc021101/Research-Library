@@ -27,6 +27,9 @@ MAX_UNITS = 10000
 MAX_CELLS = 2_000_000
 UNIT_SIZE = 12000
 PARSER_VERSION = 7
+# Versions belong to parser families, not app releases. Unaffected formats reuse indexes.
+def parser_version(suffix):
+    return 8 if suffix.lower() in {'.xlsx', '.xls', '.pptx', '.ppt'} else PARSER_VERSION
 
 @dataclass
 class Unit:
@@ -294,7 +297,7 @@ def spreadsheet_units(path, options=None, cancel=None, progress=None):
             if stopped: break
         for label, total, locations in [('缺少已保存的公式计算结果', missing_count, missing_results), ('公式结果为 Excel 错误值', error_count, formula_errors)]:
             if total:
-                recovery_warnings.append(f'部分入库：{total} 个单元格{label}（' + '、'.join(locations) + '）；请在 Excel 中完成计算并保存后重试。')
+                recovery_warnings.append(('部分入库：' if total == missing_count and label == '缺少已保存的公式计算结果' else '原表提示：') + f'{total} 个单元格{label}（' + '、'.join(locations) + ('）；请在 Excel 中完成计算并保存后重试。' if label == '缺少已保存的公式计算结果' else '）；其余有效内容正常入库，错误值保留于详情。'))
         return units, props, recovery_warnings + ['检索显示已保存的计算结果及常用数字格式；原公式仅保留在详情中，不执行公式或宏。']
     except BaseException:
         units.close(); raise
@@ -349,7 +352,7 @@ def extract_document(path, progress=None, cancel=None, options=None):
         if kind:
             with converted(path, kind) as derived:
                 metadata, units = extract_document(derived, progress, cancel, options)
-            metadata.update(file_name=path.name, file_format='xls', detected_format=kind)
+            metadata.update(file_name=path.name, file_format='xls', detected_format=kind, parser_version=parser_version(original_suffix))
             if metadata['metadata_provenance']['fields']['title']['source'] == 'filename':
                 metadata['title'] = path.stem
                 metadata['metadata_provenance']['fields']['title']['evidence'] = path.stem
@@ -359,7 +362,7 @@ def extract_document(path, progress=None, cancel=None, options=None):
         from legacy_office import convert
         derived, conversion = convert(path, progress, cancel)
         metadata, units = extract_document(derived, progress, cancel, options)
-        metadata.update(file_name=path.name, file_format=suffix[1:], conversion=conversion)
+        metadata.update(file_name=path.name, file_format=suffix[1:], conversion=conversion, parser_version=parser_version(original_suffix))
         fields = metadata['metadata_provenance']['fields']
         if fields['title']['source'] == 'filename':
             metadata['title'] = path.stem
@@ -400,8 +403,7 @@ def extract_document(path, progress=None, cancel=None, options=None):
             units = delimited_units(text, '\t' if suffix == '.tsv' else ',', options, cancel) if suffix in {'.csv', '.tsv'} else text_units(text)
     if format_warning: warnings.append(format_warning)
     _, text_limit, unit_limit, _ = reading_limits(options)
-    if not any(u.text.strip() for u in units):
-        raise ValueError('未提取到可检索文字；文档为空、图片没有可识别文字，或图片格式不受支持。')
+    no_text = not any(u.text.strip() for u in units)
     # Bound response size even for unusually long source lines/rows.
     bounded = Spool()
     text_count = 0
@@ -425,21 +427,24 @@ def extract_document(path, progress=None, cancel=None, options=None):
             start = end
     if isinstance(units, Spool): units.close()
     units = bounded
-    if not units: raise ValueError('首个阅读单元超过当前限额；请开启大文件模式或拆分文件。')
+    if not units and not no_text: raise ValueError('首个阅读单元超过当前限额；请开启大文件模式或拆分文件。')
     title = (props.get('title') or '').strip() or path.stem
-    cover = units[0].text
+    original_title = props.get('title') or None
+    # Presentation templates often retain an unrelated authoring title.
+    if suffix == '.pptx': title = path.stem
+    cover = units[0].text if units else ''
     # Only unprefixed explicit lines count as publisher/date evidence.
     evidence = re.sub(r'^\[段落 \d+\] ', '', cover, flags=re.M)
     institution, inst_evidence = institution_from_cover(evidence)
     published, display, precision, date_evidence = cover_date(evidence)
-    fields = {'title': {'source': 'embedded_metadata' if props.get('title') else 'filename', 'evidence': title}}
+    fields = {'title': {'source': 'embedded_metadata' if props.get('title') and suffix != '.pptx' else 'filename', 'evidence': title}}
     if institution: fields['institution'] = {'source': 'first_unit', 'evidence': inst_evidence, 'needs_review': units[0].location.get('kind') == 'embedded_image'}
     if display: fields['published_date'] = {'source': 'first_unit', 'evidence': date_evidence, 'needs_review': units[0].location.get('kind') == 'embedded_image'}
     metadata = {'title': title, 'file_name': path.name, 'file_format': suffix[1:], 'pdf_title': None,
         'author': props.get('author') or None, 'institution': institution, 'published_date': published,
         'publication_date_display': display, 'publication_date_precision': precision,
         'source_type': 'unclassified', 'companies': [], 'metadata_schema_version': SCHEMA_VERSION,
-        'parser_version': PARSER_VERSION, 'large_file_mode': (options or {}).get('large_file_mode', False),
+        'parser_version': parser_version(original_suffix), 'original_title': original_title, 'no_searchable_text': no_text, 'large_file_mode': (options or {}).get('large_file_mode', False),
         'partial': any('部分入库' in w for w in warnings), 'detected_format': suffix[1:], 'ocr_summary': ocr_summary, 'encoding': encoding, 'extraction_warnings': warnings,
         'metadata_provenance': {'fields': fields, 'policy': 'Explicit source evidence only; creation dates are not publication dates.'}}
     return metadata, units

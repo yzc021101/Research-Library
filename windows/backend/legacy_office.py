@@ -134,6 +134,12 @@ def conversion_workspace(parent):
 
 
 def convert(path, progress=None, cancel=None, timeout=TIMEOUT):
+    from cache_lock import locked
+    key = hashlib.sha256((digest(path)+path.suffix.lower()).encode()).hexdigest()
+    with locked('legacy-'+key, cancel):
+        return _convert(path, progress, cancel, timeout)
+
+def _convert(path, progress=None, cancel=None, timeout=TIMEOUT):
     path = Path(path)
     suffix = path.suffix.lower()
     if suffix not in FORMATS: raise ValueError('不是支持的旧版 Office 格式。')

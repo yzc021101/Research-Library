@@ -231,7 +231,10 @@ class Engine:
         if name == "sync_library":
             # MCP keeps the synchronous contract; UI uses background /sync instead.
             with self.state_lock:
-                if self.working or self.model_busy or self.components.job['phase'] in ('installing', 'downloading'): raise ValueError("正在同步或切换模型，请稍后重试。")
+                if self.working or self.model_busy or self.components.job['phase'] in ('installing', 'downloading'):
+                    return {"status": "indexing" if self.working else "busy", "accepted": False,
+                            "retryable": True, "message": "资料索引或模型组件正在准备中，请稍后重试。",
+                            "sync_progress": self.library.progress()}
                 self.library.sync_cancel.clear()
                 self.working = True
             try:
@@ -250,7 +253,21 @@ class Engine:
                  "read_unit": self.library.read_unit,
                  "read_page": self.library.read_page}
         if name not in names: raise ValueError("Unknown tool")
-        return names[name](**args)
+        # Never queue client calls behind an import transaction for minutes.
+        if not self.library.lock.acquire(timeout=0.05):
+            return {"status": "indexing" if self.working else "busy", "retryable": True,
+                    "message": "资料索引正在建立中，请稍后重试。" if self.working else "资料库正在处理其他请求，请稍后重试。",
+                    "sync_progress": self.library.progress(), "results_complete": False}
+        try:
+            if self.working and name == "search_passages":
+                args = {**args, "mode": "keyword"}
+            result = names[name](**args)
+            if self.working:
+                result.update(indexing=True, results_complete=False, sync_progress=self.library.progress(),
+                              indexing_notice="正在建立索引，当前结果仅覆盖已完成入库的资料。")
+            return result
+        finally:
+            self.library.lock.release()
 
 def main():
     own_group = False

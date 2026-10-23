@@ -345,6 +345,7 @@ struct MainView: View {
     @State private var columns: NavigationSplitViewVisibility = .all
     @State private var failedRecordsExpanded = true
     @State private var partialRecordsExpanded = true
+    @State private var skippedRecordsExpanded = false
     @State private var readyRecordsExpanded = false
     var title: String { ["overview":"概览", "sources":"资料来源", "search":"检索资料", "mcp":"MCP 接入"][m.selected] ?? "资料库" }
 
@@ -559,6 +560,8 @@ struct MainView: View {
                     importGroup("部分入库", files: m.visibleFiles.filter { $0["state"] as? String == "partial" }, expanded: $partialRecordsExpanded, failed: true, partial: true)
                     Divider()
                     importGroup("已入库", files: m.visibleFiles.filter { $0["state"] as? String == "ready" }, expanded: $readyRecordsExpanded, failed: false)
+                    Divider()
+                    importGroup("已跳过：无可检索文字", files: m.visibleFiles.filter { $0["state"] as? String == "skipped" }, expanded: $skippedRecordsExpanded, failed: false)
                 }
             }
         }
