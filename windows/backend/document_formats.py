@@ -26,7 +26,7 @@ MAX_TEXT = 8_000_000
 MAX_UNITS = 10000
 MAX_CELLS = 2_000_000
 UNIT_SIZE = 12000
-PARSER_VERSION = 6
+PARSER_VERSION = 7
 
 @dataclass
 class Unit:
@@ -79,6 +79,7 @@ def word_units(path):
     from docx.table import Table
     from docx.text.paragraph import Paragraph
     doc = Document(path)
+    _select_alternate_content(doc.element)
     units, lines, size = [], [], 0
     paragraph, table_number, first, last, heading = 0, 0, None, None, ''
     grid_rows = []
@@ -91,12 +92,18 @@ def word_units(path):
                 tables=[make_table(f'表格 {table_number}', grid_rows)] if grid_rows else []))
         lines, size, first, last, grid_rows = [], 0, None, None, []
     for block_no, block in enumerate(doc.iter_inner_content(), 1):
+        boxes = []
+        for box in block._element.xpath('.//w:txbxContent'):
+            ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+            text = '\n'.join(''.join(t.text or '' for t in p.iter(ns+'t')) for p in box.iter(ns+'p'))
+            if text.strip(): boxes.append('[文本框]\n'+text)
         if isinstance(block, Paragraph):
             paragraph += 1
-            if not block.text.strip(): continue
+            if not block.text.strip() and not boxes: continue
             if block.style and block.style.name.startswith('Heading'):
                 flush(); heading = block.text
             value = f'[段落 {paragraph}] {block.text}'
+            if boxes: value += '\n'+'\n'.join(boxes)
         elif isinstance(block, Table):
             flush(); table_number += 1
             rows = [[c.text for c in row.cells] for row in block.rows]
@@ -110,15 +117,37 @@ def word_units(path):
                 grid_rows.append({'index': r, 'cells': {str(c+1): table_cell(v) for c, v in enumerate(row)},
                     '_start': size, '_end': size + len(value)})
                 lines.append(value); size += len(value) + 1
-            flush(); continue
+            flush()
+            if boxes:
+                first = last = block_no;lines.extend(boxes);flush()
+            continue
         else: continue
         if size + len(value) > UNIT_SIZE: flush()
         first = first or block_no; last = block_no
         lines.append(value); size += len(value) + 1
     flush()
     props = {'title': doc.core_properties.title, 'author': doc.core_properties.author}
-    warnings = ['Word 按正文顺序提取；页眉页脚、修订、文本框和图片可能不完整，引用使用正文块而非排版页码。']
+    warnings = ['Word 提取正文、表格和文本框，引用使用正文块而非排版页码；页眉页脚、修订和复杂图形请回看原件。']
     return units, props, warnings
+
+
+def _select_alternate_content(root):
+    """Choose one OOXML representation in memory, never duplicate its fallback.
+
+    python-pptx ignores shapes wrapped in mc:AlternateContent. Their normal
+    text/table nodes become readable after selecting the primary representation.
+    The modern branch is preferred; fallback is used if there is no Choice.
+    """
+    ns = '{http://schemas.openxmlformats.org/markup-compatibility/2006}'
+    for node in list(root.iter(ns+'AlternateContent')):
+        parent = node.getparent()
+        if parent is None: continue
+        branch = next((b for b in node if b.tag == ns+'Choice'), None)
+        if branch is None: branch = next((b for b in node if b.tag == ns+'Fallback'), None)
+        if branch is None: continue
+        index=parent.index(node)
+        for child in list(branch): parent.insert(index,child);index+=1
+        parent.remove(node)
 
 def _presentation_shape_order(shape):
     # python-pptx resolves inherited placeholder coordinates when available.
@@ -136,6 +165,7 @@ def presentation_units(path):
     from pptx import Presentation
     from pptx.enum.shapes import MSO_SHAPE_TYPE
     deck = Presentation(path)
+    for slide in deck.slides: _select_alternate_content(slide.element)
     units = []
     def shape_content(shape):
         if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
@@ -187,11 +217,14 @@ def spreadsheet_units(path, options=None, cancel=None, progress=None):
     from datetime import datetime, date, time as dt_time
     from openpyxl.utils import get_column_letter, column_index_from_string
     from excel_compat import sparse_rows
+    from excel_values import display_value
     from office_ocr import cancelled
     units = Spool()
     formula_book, cached_book, recovery_warnings = open_compatible_books(path)
     cell_limit, text_limit, unit_limit, seconds = reading_limits(options)
     count = text_count = 0
+    missing_results, formula_errors = [], []
+    missing_count = error_count = 0
     deadline = time.monotonic() + seconds
     stopped = False
     try:
@@ -224,22 +257,29 @@ def spreadsheet_units(path, options=None, cancel=None, progress=None):
                 count += len(row)
                 if not row: continue
                 if progress and row_no % 200 == 0: progress(stage='reading', location=f'{sheet.title} · 第 {row_no} 行')
-                if not context:
-                    context = '首个非空行参考：' + ' | '.join(f'{get_column_letter(i)}={formula_text(c.value) if c.data_type == "f" else c.value}' for i,c in row.items())[:2000]
                 items, cells = [], {}
                 for col, cell in row.items():
                     cached_cell = values.get(col)
                     display = cached_cell.value if cell.data_type == 'f' and cached_cell else cell.value
-                    if cell.data_type == 'f' and cached_cell is None: display = '未保存（未重新计算）'
-                    if isinstance(display, datetime):
-                        display = display.date().isoformat() if display.time() == dt_time() and 'h' not in cell.number_format.lower() and 's' not in cell.number_format.lower() else display.isoformat(sep=' ')
-                    elif isinstance(display, (date, dt_time)): display = display.isoformat()
+                    saved = cached_cell is not None and getattr(cached_cell, 'saved', True)
+                    if cell.data_type == 'f' and not saved:
+                        display = '缺少已保存的计算结果'
+                        missing_count += 1
+                        if len(missing_results) < 10: missing_results.append(f'{sheet.title}!{cell.coordinate}')
+                    elif cell.data_type == 'f' and getattr(cached_cell, 'data_type', '') == 'e':
+                        error_count += 1
+                        if len(formula_errors) < 10: formula_errors.append(f'{sheet.title}!{cell.coordinate}={display}')
+                    raw_value = display
+                    display = display_value(display, cell.number_format)
                     extras = {'coordinate': cell.coordinate, 'number_format': cell.number_format}
+                    if isinstance(raw_value, (int, float, bool)): extras['saved_value'] = raw_value
                     if cell.data_type == 'f':
                         extras['formula'] = formula_text(cell.value)
-                        extras['cached_result'] = cached_cell is not None
+                        extras['cached_result'] = saved
                     cells[get_column_letter(col)] = table_cell(display, **extras)
                     items.append(f'{cell.coordinate}={display}')
+                if not context:
+                    context = '首个非空行参考：' + ' | '.join(items)[:2000]
                 line = f'[{sheet.title} 行 {row_no}] ' + ' | '.join(items)
                 if parts and size + len(line) + 1 > UNIT_SIZE: flush()
                 if text_count + len(line) + len(context) + 1 > text_limit or len(units) >= unit_limit:
@@ -252,7 +292,10 @@ def spreadsheet_units(path, options=None, cancel=None, progress=None):
                 parts.append(line); size += len(line)+1; text_count += len(line)+1
             flush()
             if stopped: break
-        return units, props, recovery_warnings + ['公式不执行；检索采用保存的结果，原公式保留在表格详情中。保存结果可能缺失或过期。']
+        for label, total, locations in [('缺少已保存的公式计算结果', missing_count, missing_results), ('公式结果为 Excel 错误值', error_count, formula_errors)]:
+            if total:
+                recovery_warnings.append(f'部分入库：{total} 个单元格{label}（' + '、'.join(locations) + '）；请在 Excel 中完成计算并保存后重试。')
+        return units, props, recovery_warnings + ['检索显示已保存的计算结果及常用数字格式；原公式仅保留在详情中，不执行公式或宏。']
     except BaseException:
         units.close(); raise
     finally:

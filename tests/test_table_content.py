@@ -76,7 +76,7 @@ for query,name in [('Sol','table.xlsx'),('CsvGrid','table.csv'),('WordGrid','tab
 # Dates, formula text and number formats must match the valid workbook despite style recovery.
 a,_=extract_document(S/'table.xlsx');b,units=extract_document(S/'bad-style.xlsx')
 row=next(r for u in units for t in u.tables for r in t['rows'] if r['index']==18)
-check('formula_not_recalculated','未保存' in row['cells']['B']['text'] and row['cells']['B']['formula']=='=1+2')
+check('formula_not_recalculated',row['cells']['B']['text']=='缺少已保存的计算结果' and row['cells']['B']['cached_result'] is False and row['cells']['B']['formula']=='=1+2')
 check('number_format_preserved',row['cells']['C']['number_format']=='0.0%')
 check('all_original_bytes_unchanged',all(hashlib.sha256((S/n).read_bytes()).hexdigest()==sha for n,sha in original.items()))
 # Legacy index entries must be reindexed once and then remain stable.

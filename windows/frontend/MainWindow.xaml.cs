@@ -15,8 +15,11 @@ public sealed partial class MainWindow : Window {
  string page="home",client="Codex",query=""; bool loaded,refreshing,busy,closing;
  readonly DispatcherTimer timer=new(){Interval=TimeSpan.FromSeconds(3)};
  readonly string uiFile=Path.Combine(Engine.Root,"data","windows-ui.json"); JsonObject ui=new();
+ EventWaitHandle? uninstallSignal;RegisteredWaitHandle? uninstallWait;
  public MainWindow(){
   InitializeComponent();ExtendsContentIntoTitleBar=true;SetTitleBar(AppTitleBar);ConfigureWindowSize();
+  uninstallSignal=new EventWaitHandle(false,EventResetMode.AutoReset,UninstallSupport.EventName);
+  uninstallWait=ThreadPool.RegisterWaitForSingleObject(uninstallSignal,(_,_)=>DispatcherQueue.TryEnqueue(async()=>await Quit()),null,Timeout.Infinite,false);
   AdaptiveLayout.Row(PageHeader,PageTitle,PageActions,500);
   AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory,"Assets","AppIcon.ico"));
   if(File.Exists(uiFile)){try{ui=JsonNode.Parse(File.ReadAllText(uiFile))!.AsObject();}catch{}}
@@ -183,18 +186,65 @@ public sealed partial class MainWindow : Window {
   Note("需自行检查目标客户端是否正常调用。使用期间请保持本应用和资料库服务运行。");
  }
  Task Copy(string value){var content=new DataPackage();content.SetText(value);Clipboard.SetContent(content);Clipboard.Flush();Notify("已复制",severity:InfoBarSeverity.Success);return Task.CompletedTask;}
+ void SettingsSection(string title,bool first=false){
+  var heading=Text(title,24);heading.FontWeight=Microsoft.UI.Text.FontWeights.Bold;
+  heading.Margin=new Thickness(0,first?0:32,0,0);
+  Microsoft.UI.Xaml.Automation.AutomationProperties.SetHeadingLevel(heading,Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel.Level2);
+  Body.Children.Add(heading);
+ }
+ readonly System.Threading.SemaphoreSlim settingsSaveGate=new(1,1);
+ async Task SaveControl(Control control,object value){
+  control.IsEnabled=false;await settingsSaveGate.WaitAsync();
+  try{await Save(value);}
+  catch(Exception ex){Notify("设置未保存",ex.Message,InfoBarSeverity.Error);await Render();}
+  finally{settingsSaveGate.Release();control.IsEnabled=true;}
+ }
+ ToggleSwitch SettingToggle(string key,bool fallback,string id,string name){
+  var control=new ToggleSwitch{MinWidth=0,IsOn=settings[key]?.GetValue<bool>()??fallback,OnContent="开",OffContent="关"};
+  Identify(control,id,name);control.Toggled+=async(_,_)=>await SaveControl(control,new Dictionary<string,object>{{key,control.IsOn}});return control;
+ }
+ NumberBox SettingNumber(string key,int fallback,int minimum,int maximum,string id,string name){
+  var control=new NumberBox{Value=int.TryParse(S(settings,key),out var v)?v:fallback,Minimum=minimum,Maximum=maximum,Width=180,SpinButtonPlacementMode=NumberBoxSpinButtonPlacementMode.Compact};
+  Identify(control,id,name);
+  async Task Commit(){
+   if(double.IsNaN(control.Value)||control.Value%1!=0||control.Value<minimum||control.Value>maximum){Notify("请输入范围内的整数",$"{minimum}–{maximum}",InfoBarSeverity.Warning);control.Value=int.TryParse(S(settings,key),out var old)?old:fallback;return;}
+   if(S(settings,key)==((int)control.Value).ToString())return;
+   await SaveControl(control,new Dictionary<string,object>{{key,(int)control.Value}});
+  }
+  control.LostFocus+=async(_,_)=>await Commit();control.KeyDown+=async(_,e)=>{if(e.Key==Windows.System.VirtualKey.Enter)await Commit();};
+  return control;
+ }
  void Settings(){
-  SoftwareSettings();
-  Heading("通用");
+  SettingsSection("通用",true);GeneralSettings();
+  SettingsSection("检索");
+    Note("设置同时用于 App 和 MCP；单次 MCP 调用可以另行指定。");
+    var top=SettingNumber("top_k",8,1,20,"TopK","返回片段数 Top K");
+    var mode=new ComboBox{ItemsSource=new[]{"混合检索","关键词检索","语义检索"},SelectedItem=ModeName(S(settings,"search_mode","hybrid")),Width=180};
+    Identify(mode,"SearchMode","检索方式");mode.SelectionChanged+=async(_,_)=>await SaveControl(mode,new{search_mode=mode.SelectedIndex switch{1=>"keyword",2=>"semantic",_=>"hybrid"}});
+    Body.Children.Add(Card(Stack(Row(Text("返回片段数（Top K）",16),top),Row(Text("检索方式",16),mode))));
+    Note("数字输入在按回车或离开输入框时保存。");
+  SettingsSection("资料与存储");
+    Heading("资料同步");
+    Body.Children.Add(Card(Stack(
+     Row(Text("自动检测文件变化",16),SettingToggle("auto_scan",true,"AutoScan","自动检测文件变化")),
+     Row(Text("检查间隔（秒）",16),SettingNumber("scan_interval",30,15,600,"ScanInterval","检查间隔 秒")))));
+    Body.Children.Add(Card(Row(Stack(Text("大文件模式",16),Text("有效单元格额度从 200 万提高至 500 万，读取时间和索引空间也会增加。",14,true)),SettingToggle("large_file_mode",false,"LargeFileMode","大文件模式"))));
+    Note("部分入库文件可以在资料来源中重试。Excel 使用文件已保存的计算结果，不执行公式或宏。");
+    StorageSettings();
+    Heading("资料库位置");Body.Children.Add(Card(Row(Stack(Text("资料库目录",16),Text(Engine.Root,14,true)),Stack(Button("管理来源文件夹",()=>Go("sources")),Button("打开资料库文件夹",()=>OpenFolder(Engine.Root))))));
+  SettingsSection("模型与组件");
+    Heading("向量模型","模型按需载入。切换模型会重建索引，下载和移除操作均需确认。");
+    modelPanel=new StackPanel{Spacing=12};Body.Children.Add(modelPanel);modelFingerprint="";UpdateModels();ComponentSettings();
+  SettingsSection("更新与关于");
+    SoftwareSettings();Heading("关于投研纵览");Note("本地资料检索 · research_library");
+    Body.Children.Add(Card(Row(Text("当前版本",16),Text(UpdateVersion,16,true))));
+    Body.Children.Add(Button("退出投研纵览",Quit));
+ }
+ void GeneralSettings(){
+  Heading("启动与关闭","设置自动保存。");
   var closeBehavior=new ComboBox{ItemsSource=new[]{"最小化到托盘","直接退出"},SelectedIndex=settings["keep_in_menu_bar"]?.GetValue<bool>()==true?0:1,Width=180};
-  Identify(closeBehavior,"CloseBehavior","关闭窗口时");bool updatingCloseBehavior=false;
-  closeBehavior.SelectionChanged+=async(_,_)=>{
-   if(updatingCloseBehavior)return;
-   if(busy){updatingCloseBehavior=true;closeBehavior.SelectedIndex=settings["keep_in_menu_bar"]?.GetValue<bool>()==true?0:1;updatingCloseBehavior=false;return;}
-   bool keep=closeBehavior.SelectedIndex==0;closeBehavior.IsEnabled=false;
-   await Guard(async()=>{try{await Save(new{keep_in_menu_bar=keep});Notify("关闭窗口行为已保存");}
-    finally{updatingCloseBehavior=true;closeBehavior.SelectedIndex=settings["keep_in_menu_bar"]?.GetValue<bool>()==true?0:1;updatingCloseBehavior=false;closeBehavior.IsEnabled=true;}});
-  };
+  Identify(closeBehavior,"CloseBehavior","关闭窗口时");
+  closeBehavior.SelectionChanged+=async(_,_)=>await SaveControl(closeBehavior,new{keep_in_menu_bar=closeBehavior.SelectedIndex==0});
   var login=new ToggleSwitch{MinWidth=0,IsOn=LoginStartup.Enabled,OnContent="开",OffContent="关"};bool updatingLogin=false;
   Identify(login,"LoginStartup","登录 Windows 时启动");
   login.Toggled+=async(_,_)=>{if(updatingLogin)return;bool requested=login.IsOn;
@@ -202,29 +252,10 @@ public sealed partial class MainWindow : Window {
     var confirm=new ContentDialog{XamlRoot=Shell.XamlRoot,Title=requested?"登录 Windows 时启动？":"关闭登录启动？",Content=requested?"会为当前 Windows 用户添加投研纵览登录项。登录后在托盘运行，可随时在这里关闭。":"只移除投研纵览自己的登录项，不影响其他应用。",PrimaryButtonText="确认",CloseButtonText="取消"};
     if(await confirm.ShowAsync()==ContentDialogResult.Primary)LoginStartup.Set(requested);
    }finally{updatingLogin=true;login.IsOn=LoginStartup.Enabled;updatingLogin=false;}});};
-  Body.Children.Add(Card(Stack(Row(Text("关闭窗口时",16),closeBehavior),Row(Text("登录 Windows 时启动",16),login))));
-  Note("最小化到托盘：关闭窗口后继续在后台运行。直接退出：关闭窗口时结束应用及其启动的服务。托盘菜单中的“退出投研纵览”始终会直接退出。");
-  Heading("检索");
-  var top=new NumberBox{Value=double.Parse(S(settings,"top_k","8")),Minimum=1,Maximum=20,SmallChange=1,SpinButtonPlacementMode=NumberBoxSpinButtonPlacementMode.Compact,Width=180};
-  var mode=new ComboBox{ItemsSource=new[]{"混合检索","关键词检索","语义检索"},SelectedItem=ModeName(S(settings,"search_mode","hybrid")),Width=180};
-  var largeFiles=new ToggleSwitch{MinWidth=0,IsOn=settings["large_file_mode"]?.GetValue<bool>()??false,OnContent="开",OffContent="关"};
-  Identify(largeFiles,"LargeFileMode","大文件模式");
-  var scan=new ToggleSwitch{MinWidth=0,IsOn=settings["auto_scan"]?.GetValue<bool>()??true,OnContent="开",OffContent="关"};
-  var interval=new NumberBox{Value=double.Parse(S(settings,"scan_interval","30")),Minimum=15,Maximum=600,Width=180,SpinButtonPlacementMode=NumberBoxSpinButtonPlacementMode.Compact};
-  var autostart=new ToggleSwitch{MinWidth=0,IsOn=settings["start_service_on_launch"]?.GetValue<bool>()??true,OnContent="开",OffContent="关"};
-  Identify(top,"TopK","返回片段数 Top K");Identify(mode,"SearchMode","检索方式");Identify(scan,"AutoScan","自动检测文件变化");Identify(interval,"ScanInterval","检查间隔 秒");Identify(autostart,"StartService","打开应用时启动服务");
-  Body.Children.Add(Card(Stack(Row(Text("返回片段数（Top K）",16),top),Row(Text("检索方式",16),mode))));
-  Heading("资料同步");Body.Children.Add(Card(Stack(Row(Text("大文件模式",16),largeFiles),Row(Text("自动检测文件变化",16),scan),Row(Text("检查间隔（秒）",16),interval),Row(Text("打开应用时启动服务",16),autostart))));
-  Body.Children.Add(Button("保存设置",async()=>{if(double.IsNaN(top.Value)||top.Value%1!=0||double.IsNaN(interval.Value)||interval.Value%1!=0)throw new Exception("请输入范围内的整数。");await Save(new{top_k=(int)top.Value,search_mode=mode.SelectedIndex switch{1=>"keyword",2=>"semantic",_=>"hybrid"},large_file_mode=largeFiles.IsOn,auto_scan=scan.IsOn,scan_interval=(int)interval.Value,start_service_on_launch=autostart.IsOn});Notify("设置已保存",severity:InfoBarSeverity.Success);},true));
-  Note("默认读取最多 200 万个有效单元格；大文件模式提高到 500 万格，处理时间和索引空间也会增加。部分入库文件会在切换模式后重新读取。");
-  Note("Top K 与检索方式同时用于 App 和 MCP；单次 MCP 调用可以另行指定。");
-  Heading("外观");var theme=new ComboBox{ItemsSource=new[]{"跟随系统","浅色","深色"},SelectedItem=ui["theme"]?.ToString()??"跟随系统",Width=180};theme.SelectionChanged+=(_,_)=>{string t=theme.SelectedItem.ToString()!;ApplyTheme(t);ui["theme"]=t;PersistUI();};Body.Children.Add(Card(Row(Text("应用主题",16),theme)));
-  Heading("向量模型");Note("当前模型按需载入。切换模型会重建索引；其他模型仅在你确认后下载。");
-  modelPanel=new StackPanel{Spacing=12};Body.Children.Add(modelPanel);modelFingerprint="";UpdateModels();
-  ComponentSettings();
-  StorageSettings();
-  Heading("存储");Body.Children.Add(Card(Row(Stack(Text("资料库目录",16),Text(Engine.Root,14,true)),Stack(Button("管理来源文件夹",()=>Go("sources")),Button("打开资料库文件夹",()=>OpenFolder(Engine.Root))))));
-  Body.Children.Add(Button("退出投研纵览",Quit));
+  Body.Children.Add(Card(Stack(Row(Text("关闭窗口时",16),closeBehavior),Row(Text("登录 Windows 时启动",16),login),Row(Text("打开应用时启动服务",16),SettingToggle("start_service_on_launch",true,"StartService","打开应用时启动服务")))));
+  Note("最小化到托盘后，MCP 继续运行。直接退出会结束应用及其启动的服务。托盘菜单中的“退出投研纵览”始终会直接退出。");
+  Heading("外观");var theme=new ComboBox{ItemsSource=new[]{"跟随系统","浅色","深色"},SelectedItem=ui["theme"]?.ToString()??"跟随系统",Width=180};
+  Identify(theme,"AppTheme","应用主题");theme.SelectionChanged+=(_,_)=>{string t=theme.SelectedItem.ToString()!;ApplyTheme(t);ui["theme"]=t;PersistUI();};Body.Children.Add(Card(Row(Text("应用主题",16),theme)));
  }
  void UpdateModels(){
   if(modelPanel==null)return;

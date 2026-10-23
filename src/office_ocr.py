@@ -147,6 +147,10 @@ def run_tesseract(command, event, timeout=90):
 
 def recognize(picture, event=None):
     cancelled(event)
+    from office_vector import inspect_emf
+    emf = inspect_emf(picture.blob)
+    if emf and emf['empty']:
+        return {'text': '', 'cache_hit': False, 'skip_reason': 'empty_vector_placeholder'}
     policy = json.dumps([VERSION, picture.crop, picture.rotation, picture.flip_h, picture.flip_v, 'eng+chi_sim'])
     key = hashlib.sha256(picture.blob + policy.encode()).hexdigest()
     folder = inside(CACHE / key, ROOT)
@@ -158,8 +162,9 @@ def recognize(picture, event=None):
         except (OSError, ValueError): pass
     executable = shutil.which('tesseract')
     if not executable: raise RuntimeError('未找到 Tesseract；安装本地 OCR 引擎及 eng、chi_sim 语言包后重新同步。')
-    with Image.open(io.BytesIO(picture.blob)) as header:
-        vector = header.format == 'WMF'
+    vector = emf is not None
+    if not vector:
+        with Image.open(io.BytesIO(picture.blob)) as header: vector = header.format == 'WMF'
     if vector:
         from office_vector import rasterize
         image, source_dimensions = rasterize(picture.blob, event)
@@ -213,7 +218,7 @@ def extract_images(path, progress=None, event=None, suffix=None):
     # Import here to avoid a circular module dependency.
     from document_formats import Unit
     units, errors = [], []
-    summary = {'images': 0, 'recognized': 0, 'empty': 0, 'failed': 0, 'cache_hits': 0}
+    summary = {'images': 0, 'recognized': 0, 'empty': 0, 'failed': 0, 'cache_hits': 0, 'empty_placeholders': 0}
     for n, picture in enumerate(embedded_images(path, suffix), 1):
         cancelled(event)
         if n > MAX_IMAGES:
@@ -223,6 +228,7 @@ def extract_images(path, progress=None, event=None, suffix=None):
         if progress: progress(stage='ocr', image=n, location=label)
         try:
             result = recognize(picture, event)
+            if result.get('skip_reason') == 'empty_vector_placeholder': summary['empty_placeholders'] += 1
             summary['cache_hits'] += int(result['cache_hit'])
             if not result['text']: summary['empty'] += 1; continue
             summary['recognized'] += 1

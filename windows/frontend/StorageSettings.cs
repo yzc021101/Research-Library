@@ -8,8 +8,8 @@ public sealed partial class MainWindow {
   var snapshots=new ToggleSwitch{MinWidth=0,IsOn=settings["keep_snapshots"]?.GetValue<bool>()??false,OnContent="开",OffContent="关"};
   var retention=new ComboBox{ItemsSource=new[]{7,30,90,365},SelectedItem=settings["cache_retention_days"]?.GetValue<int>()??30,Width=180};
   Identify(snapshots,"KeepSnapshots","保留原文快照");Identify(retention,"CacheRetention","缓存保留天数");
-  snapshots.Toggled+=async(_,_)=>await Guard(async()=>{await Save(new{keep_snapshots=snapshots.IsOn});});
-  retention.SelectionChanged+=async(_,_)=>await Guard(async()=>{await Save(new{cache_retention_days=(int)retention.SelectedItem});});
+  snapshots.Toggled+=async(_,_)=>await SaveControl(snapshots,new{keep_snapshots=snapshots.IsOn});
+  retention.SelectionChanged+=async(_,_)=>await SaveControl(retention,new{cache_retention_days=(int)retention.SelectedItem});
   Body.Children.Add(Card(Stack(Row(Text("保留原文快照",16),snapshots),Row(Text("缓存保留天数",16),retention))));
   Note("默认关联原文件，显示真实文件名。开启快照后，同步时另存原文用于版本核对。服务每天清理过期缓存和旧索引；开启时保留当前版本快照。");
   var stats=new StackPanel{Spacing=10};var message=Text("点击刷新查看空间占用。",14,true);

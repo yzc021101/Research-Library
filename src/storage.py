@@ -108,7 +108,7 @@ class StorageMixin:
         with self.lock:
             cfg = self.settings(); cutoff = time.time()-cfg.get('cache_retention_days', 30)*86400
             roots = self.roots()
-            active = {r['doc_id'] for r in self.db.execute("SELECT path,doc_id FROM sources WHERE state='ready'")
+            active = {r['doc_id'] for r in self.db.execute("SELECT path,doc_id FROM sources WHERE state IN ('ready','partial')")
                       if any(Path(r['path']).resolve().is_relative_to(root) for root in roots)}
             rows = list(self.db.execute('SELECT doc_id,sha256,snapshot,indexed_at FROM documents'))
             protected = {r['sha256'] for r in rows if r['doc_id'] in active} if cfg.get('keep_snapshots', False) else set()

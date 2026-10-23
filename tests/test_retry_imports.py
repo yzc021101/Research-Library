@@ -51,4 +51,26 @@ class RetryTests(unittest.TestCase):
   with self.lib.lock:
    t=threading.Thread(target=lambda:result.append(self.lib.release_idle_model()));t.start();t.join(2)
   self.assertEqual(result,[False]);self.assertIsNotNone(self.lib._embedder)
+ def test_partial_remains_searchable_and_is_retryable(self):
+  import json
+  self.lib.sync(retry=True)
+  doc=self.lib.db.execute('SELECT doc_id FROM sources WHERE path=?',(str(self.bad),)).fetchone()[0]
+  meta=json.loads(self.lib.db.execute('SELECT metadata FROM documents WHERE doc_id=?',(doc,)).fetchone()[0])
+  meta.update(partial=True,extraction_warnings=['部分入库：图片未识别'])
+  self.lib.db.execute('UPDATE documents SET metadata=? WHERE doc_id=?',(json.dumps(meta),doc))
+  self.lib.db.execute("UPDATE sources SET state='partial' WHERE doc_id=?",(doc,));self.lib.db.commit()
+  self.assertIn(doc,self.lib.active_docs())
+  result=self.lib.sync(retry=True,path=str(self.bad))
+  self.assertEqual([x['file'] for x in result['results']],[str(self.bad)])
+  self.assertEqual(result['results'][0]['action'],'indexed')
+  self.assertEqual(self.lib.db.execute('SELECT state FROM sources WHERE doc_id=?',(doc,)).fetchone()[0],'ready')
+ def test_old_partial_records_migrate_without_reparse(self):
+  import json
+  doc=self.lib.db.execute('SELECT doc_id FROM sources WHERE path=?',(str(self.good),)).fetchone()[0]
+  meta=json.loads(self.lib.db.execute('SELECT metadata FROM documents WHERE doc_id=?',(doc,)).fetchone()[0])
+  meta.update(partial=True,extraction_warnings=['部分入库：图片未识别'])
+  self.lib.db.execute('UPDATE documents SET metadata=? WHERE doc_id=?',(json.dumps(meta),doc));self.lib.db.commit()
+  self.lib.db.close();self.lib=Library(lambda:{'source_folders':[str(INBOX)]})
+  self.assertEqual(self.lib.db.execute('SELECT state FROM sources WHERE doc_id=?',(doc,)).fetchone()[0],'partial')
+  self.assertIn(doc,self.lib.active_docs())
 if __name__=='__main__':unittest.main()

@@ -115,6 +115,24 @@ class Library(StorageMixin):
                     self.db.execute("DELETE FROM sources WHERE path=?", (source[0],))
                 else: self.db.execute("UPDATE sources SET path=? WHERE path=?", (absolute, source[0]))
         self.db.commit()
+        if not self.db.execute("SELECT 1 FROM library_config WHERE key='quality_audit_v1'").fetchone():
+            # A whole document without text cannot answer a search. Empty pages
+            # within an otherwise readable document may simply be intentional.
+            empty = self.db.execute("SELECT doc_id FROM pages GROUP BY doc_id HAVING SUM(length(trim(text)))=0").fetchall()
+            for item in empty:
+                row = self.db.execute('SELECT metadata FROM documents WHERE doc_id=?', (item[0],)).fetchone()
+                if row:
+                    metadata = json.loads(row[0]);metadata['partial'] = True
+                    metadata.setdefault('extraction_warnings', []).append('部分入库：未提取到可检索文字；请核对原文件或安装 OCR 组件后重试。')
+                    self.db.execute('UPDATE documents SET metadata=? WHERE doc_id=?', (json.dumps(metadata), item[0]))
+            self.db.execute("INSERT INTO library_config VALUES('quality_audit_v1','complete')")
+        # Older releases labelled incomplete documents as ready. Migrate status
+        # from recorded metadata without reparsing or hiding searchable content.
+        for row in self.db.execute("SELECT s.path,d.metadata FROM sources s JOIN documents d USING(doc_id) WHERE s.state='ready'").fetchall():
+            metadata = json.loads(row['metadata'])
+            if metadata.get('partial'):
+                self.db.execute("UPDATE sources SET state='partial',error=? WHERE path=?", ('；'.join(metadata.get('extraction_warnings', [])), row['path']))
+        self.db.commit()
         self._embedder = None
         self._embedding_last_used = time.monotonic()
         self._vectors = None
@@ -281,6 +299,7 @@ class Library(StorageMixin):
                     json.dumps({'kind': 'pdf_page', 'pdf_page': i+1, 'label': f'PDF 第 {i+1} 页', 'ocr_regions': ocr_regions})))
                 for j, (part, start, end) in enumerate(split_text(text)):
                     chunks.append((f"{doc_id}:p{i+1}:c{j+1}", doc_id, i+1, start, end, part))
+            if not chunks: ocr_errors.append('未提取到可检索文字；请核对原文件，图片文字可安装 OCR 组件后重试。')
             meta = self.metadata(path, pdf, pages[0][3] if pages else "")
             from pdf_ocr import VERSION as OCR_VERSION
             meta['pdf_ocr_version'] = OCR_VERSION
@@ -304,9 +323,9 @@ class Library(StorageMixin):
             style_failures = {r[0] for r in self.db.execute("SELECT path FROM sources WHERE state='failed' AND error LIKE '%stylesheet%'")}
             files = sorted(self.files(), key=lambda p: str(p.absolute()) not in style_failures)
             if retry:
-                failed = {row[0] for row in self.db.execute("SELECT path FROM sources WHERE state='failed'")}
+                failed = {row[0] for row in self.db.execute("SELECT path FROM sources WHERE state IN ('failed','partial')")}
                 if path is not None:
-                    if not isinstance(path, str) or path not in failed: raise ValueError("请选择导入失败的文件")
+                    if not isinstance(path, str) or path not in failed: raise ValueError("请选择导入失败或部分入库的文件")
                     failed = {path}
                 files = [p for p in files if str(p.absolute()) in failed]
                 active = {str(p.absolute()) for p in files}
@@ -325,12 +344,13 @@ class Library(StorageMixin):
                     identity = sha if path.suffix.lower() == '.pdf' else hashlib.sha256((sha + path.suffix.lower()).encode()).hexdigest()
                     doc_id = "d_" + identity[:24]
                     exists = self.db.execute("SELECT metadata FROM documents WHERE doc_id=?", (doc_id,)).fetchone()
-                    rebuild = bool(exists and path.suffix.lower() != '.pdf' and (json.loads(exists[0]).get('parser_version') != PARSER_VERSION or (json.loads(exists[0]).get('ocr_summary') or {}).get('failed', 0)))
+                    rebuild = bool(exists and path.suffix.lower() != '.pdf' and (json.loads(exists[0]).get('parser_version') != PARSER_VERSION))
                     if exists:
                         old_metadata = json.loads(exists[0])
+                        if retry and old_metadata.get('partial'): rebuild = True
                         if path.suffix.lower() == '.pdf' and old_metadata.get('partial'):
                             from pdf_ocr import VERSION as OCR_VERSION
-                            rebuild = old_metadata.get('pdf_ocr_version') != OCR_VERSION
+                            rebuild = rebuild or old_metadata.get('pdf_ocr_version') != OCR_VERSION
                         if path.suffix.lower() != '.pdf' and old_metadata.get('partial') and old_metadata.get('large_file_mode', False) != self.settings().get('large_file_mode', False):
                             rebuild = True
                     if exists and not rebuild and path.suffix.lower() in {'.docx', '.pptx', '.xlsx'} | LEGACY:
@@ -401,7 +421,7 @@ class Library(StorageMixin):
                         action = "indexed"
                     current_meta = json.loads(self.db.execute('SELECT metadata FROM documents WHERE doc_id=?', (doc_id,)).fetchone()[0])
                     note = '；'.join(current_meta.get('extraction_warnings', [])) if current_meta.get('partial') else None
-                    self.db.execute("INSERT OR REPLACE INTO sources VALUES(?,?,?,?,?)", (rel, doc_id, "ready", note, now()))
+                    self.db.execute("INSERT OR REPLACE INTO sources VALUES(?,?,?,?,?)", (rel, doc_id, "partial" if current_meta.get('partial') else "ready", note, now()))
                     self.db.commit()
                     results.append({"file": rel, "doc_id": doc_id, "action": action})
                 except InterruptedError:
@@ -422,7 +442,7 @@ class Library(StorageMixin):
         with self.lock:
             sources = [dict(x) for x in self.db.execute("SELECT * FROM sources ORDER BY path")]
             docs = self.active_docs()
-            return {"software_license": "AGPL-3.0-only", "source_code_url": "https://github.com/yzc021101/Research-Library/tree/v0.6.10", "root": str(ROOT), "inbox": str(INBOX), "active_documents": len(docs),
+            return {"software_license": "AGPL-3.0-only", "source_code_url": "https://github.com/yzc021101/Research-Library/tree/v0.6.11", "root": str(ROOT), "inbox": str(INBOX), "active_documents": len(docs),
                     "supported_formats": sorted(SUPPORTED),
                     "search_suggestions": search_suggestions(docs.values()),
                     "stored_versions": self.db.execute("SELECT count(*) FROM documents").fetchone()[0],
@@ -435,7 +455,7 @@ class Library(StorageMixin):
         allowed = set()
         source_paths = {}
         roots = self.roots()
-        for source in self.db.execute("SELECT path,doc_id FROM sources WHERE state='ready'"):
+        for source in self.db.execute("SELECT path,doc_id FROM sources WHERE state IN ('ready','partial')"):
             path = Path(source[0])
             if not path.is_absolute(): path = INBOX / path
             if any(path.resolve().is_relative_to(root) for root in roots):

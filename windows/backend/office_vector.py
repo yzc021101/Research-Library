@@ -2,6 +2,7 @@
 import io
 import json
 import zipfile
+import struct
 from PIL import Image
 from paths import ROOT
 from legacy_office import conversion_workspace, run_conversion
@@ -14,10 +15,52 @@ NS = ('xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
       'xmlns:xlink="http://www.w3.org/1999/xlink"')
 
 
+def inspect_emf(blob):
+    """Read bounded EMF records before Pillow (zero frame headers crash Pillow).
+
+    Only known non-painting records and zero-area rectangles qualify as empty.
+    Unknown records always go through rendering, never silently disappear.
+    """
+    if len(blob) < 88 or blob[40:44] != b' EMF': return None
+    declared, count = struct.unpack_from('<II', blob, 48)
+    if declared != len(blob): raise ValueError('EMF 图片记录长度不完整。')
+    offset, records, empty, viewport = 0, 0, True, None
+    state_only = {1, 9, 10, 11, 12, 14, 33, 34, 37, 48, 75}
+    while offset < len(blob):
+        if offset+8 > len(blob): raise ValueError('EMF 图片记录不完整。')
+        kind, length = struct.unpack_from('<II', blob, offset)
+        if length < 8 or length % 4 or offset+length > len(blob): raise ValueError('EMF 图片记录尺寸无效。')
+        if kind == 11 and length >= 16:
+            x, y = struct.unpack_from('<ii', blob, offset+8)
+            if x > 0 and y > 0: viewport = (x, y)
+        if kind == 43 and length == 24:
+            x1,y1,x2,y2 = struct.unpack_from('<iiii', blob, offset+8)
+            if x1 != x2 or y1 != y2: empty = False
+        elif kind not in state_only: empty = False
+        offset += length; records += 1
+    if kind != 14: raise ValueError('EMF 图片缺少结束标记。')
+    # Some Office exporters undercount EMF+ comment records. A stale count is
+    # not evidence of missing content: render it, but never classify it empty.
+    if records != count: empty = False
+    x1,y1,x2,y2 = struct.unpack_from('<iiii', blob, 8)
+    size = (x2-x1, y2-y1)
+    if min(size) <= 0: size = viewport
+    return {'empty': empty, 'size': size}
+
+
 def rasterize(blob, event=None):
-    # Pillow reads the vector header without allocating a full-size bitmap.
-    with Image.open(io.BytesIO(blob)) as header:
-        w, h = header.size
+    emf = inspect_emf(blob)
+    if emf:
+        if not emf['size']: raise ValueError('EMF 未提供有效尺寸；请在 Office 中重新保存图片后重试。')
+        w,h = emf['size']
+        # Repair only the temporary rendering copy, using source viewport units.
+        if min(struct.unpack_from('<iiii', blob, 24)[2:]) <= 0:
+            fixed=bytearray(blob)
+            struct.pack_into('<iiii', fixed, 8, 0, 0, w, h)
+            struct.pack_into('<iiii', fixed, 24, 0, 0, round(w*2540/96), round(h*2540/96))
+            blob=bytes(fixed)
+    else:
+        with Image.open(io.BytesIO(blob)) as header: w,h=header.size
     if w <= 0 or h <= 0:
         raise ValueError('矢量图片尺寸无效。')
     scale = min(4.0, 3000 / max(w, h))

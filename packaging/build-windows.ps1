@@ -21,8 +21,9 @@ Copy-Item "$Root/LICENSE","$Root/COPYRIGHT","$Root/PLATFORM-LINKING-PERMISSION.t
 # Inactive ARM host resources are not part of the x64 application.
 Remove-Item "$Release/Microsoft.Windows.Workloads.Resources_ec.dll" -ErrorAction SilentlyContinue
 Get-ChildItem $Release -Filter *.pdb -Recurse|Remove-Item -Force
-[IO.File]::WriteAllText("$Release/distribution.json",'{"version":"0.6.10"}')
-& $Python -c "import json,pathlib;p=pathlib.Path(r'$Release');(p/'distribution-files.json').write_text(json.dumps(sorted(f.relative_to(p).as_posix() for f in p.rglob('*') if f.is_file() and f.name!='distribution-files.json')))"
+[IO.File]::WriteAllText("$Release/distribution.json",'{"version":"0.6.11"}')
+& $Python "$PSScriptRoot/write-payload-manifest.py" $Release
+if($LASTEXITCODE -ne 0){throw 'Payload manifest failed'}
 & $Python "$PSScriptRoot/inspect-pe.py" $Release "$Build/architecture.json"
 if($LASTEXITCODE -ne 0){throw 'Architecture mismatch'}
 & $Python -c "import shutil;shutil.make_archive(r'$Root/dist/research_library-windows-x64','zip',r'$Build/release')"

@@ -6,12 +6,12 @@ namespace ResearchLibrary;
 public sealed partial class MainWindow {
  StackPanel? importPanel;
  string importFingerprint="";
- bool failedImportsExpanded=true,readyImportsExpanded=false;
+ bool failedImportsExpanded=true,partialImportsExpanded=true,readyImportsExpanded=false;
  async Task RetryImports(string? path=null){
   // Button already runs this action inside Guard; nesting it would discard every click.
   if(status["busy"]?.GetValue<bool>()==true)return;
   var result=await engine.Request("/imports/retry",path==null?new{}:(object)new{path});
-  Notify(result["accepted"]?.GetValue<bool>()==true?"已开始重试失败文件":"请等待当前任务完成后重试");
+  Notify(result["accepted"]?.GetValue<bool>()==true?"已开始重试未完整入库文件":"请等待当前任务完成后重试");
   importFingerprint="";await Refresh(false);
  }
  void ImportRecords(){
@@ -26,23 +26,24 @@ public sealed partial class MainWindow {
   importFingerprint=fingerprint;importPanel.Children.Clear();
   var records=(status["sources"]?.AsArray()??new()).Where(x=>x!=null&&IsCurrentSource(S(x,"path"))).ToArray();
   importPanel.Children.Add(ImportGroup(records.Where(x=>S(x,"state")=="failed").ToArray(),true));
+  importPanel.Children.Add(ImportGroup(records.Where(x=>S(x,"state")=="partial").ToArray(),true,true));
   importPanel.Children.Add(ImportGroup(records.Where(x=>S(x,"state")=="ready").ToArray(),false));
  }
- Expander ImportGroup(JsonNode?[] records,bool failed){
-  var heading=Text($"{(failed?"导入失败":"已入库")} · {records.Length} 份",16);
+ Expander ImportGroup(JsonNode?[] records,bool failed,bool partial=false){
+  var heading=Text($"{(partial?"部分入库":failed?"导入失败":"已入库")} · {records.Length} 份",16);
   heading.IsTextSelectionEnabled=false;
   var header=new StackPanel{Orientation=Orientation.Horizontal,Spacing=10};
   var icon=new FontIcon{Glyph=failed?"\uE783":"\uE73E",FontSize=18};
-  if(failed&&records.Length>0){var red=new SolidColorBrush(Microsoft.UI.Colors.IndianRed);icon.Foreground=red;heading.Foreground=red;}
+  if(failed&&records.Length>0){var red=new SolidColorBrush(partial?Microsoft.UI.Colors.DarkOrange:Microsoft.UI.Colors.IndianRed);icon.Foreground=red;heading.Foreground=red;}
   header.Children.Add(icon);header.Children.Add(heading);
   var body=new StackPanel{Spacing=12};
   var group=new Expander{Header=header,Content=body,HorizontalAlignment=HorizontalAlignment.Stretch,HorizontalContentAlignment=HorizontalAlignment.Stretch};
-  Identify(group,failed?"FailedImports":"ReadyImports",$"{(failed?"导入失败":"已入库")}，{records.Length} 份");
+  Identify(group,partial?"PartialImports":failed?"FailedImports":"ReadyImports",$"{(partial?"部分入库":failed?"导入失败":"已入库")}，{records.Length} 份");
   bool populated=false;
   void Populate(){
    if(populated)return;populated=true;
    if(records.Length==0){body.Children.Add(Text(failed?"没有失败的导入记录":"暂无已入库文档",14,true));return;}
-   if(failed){var retryAll=Button("重试所有失败文件",()=>RetryImports());Identify(retryAll,"RetryAllImports","重试所有失败文件");retryAll.IsEnabled=status["busy"]?.GetValue<bool>()!=true;body.Children.Add(Row(Text("重新导入失败的文件",14,true),retryAll));}
+   if(failed){var retryAll=Button("重试所有未完整入库文件",()=>RetryImports());Identify(retryAll,"RetryAllImports","重试所有未完整入库文件");retryAll.IsEnabled=status["busy"]?.GetValue<bool>()!=true;body.Children.Add(Row(Text("重新导入失败和部分入库的文件",14,true),retryAll));}
    foreach(var record in records.OrderBy(x=>Path.GetFileName(S(x,"path")),StringComparer.OrdinalIgnoreCase)){
     string path=S(record,"path");
     var title=Text(Path.GetFileName(path),15);ToolTipService.SetToolTip(title,path);
@@ -56,9 +57,9 @@ public sealed partial class MainWindow {
     body.Children.Add(Card(Row(details,actions)));
    }
   }
-  group.Expanding+=(_,_)=>{if(failed)failedImportsExpanded=true;else readyImportsExpanded=true;Populate();};
-  group.Collapsed+=(_,_)=>{if(failed)failedImportsExpanded=false;else readyImportsExpanded=false;};
-  group.IsExpanded=failed?failedImportsExpanded:readyImportsExpanded;
+  group.Expanding+=(_,_)=>{if(partial)partialImportsExpanded=true;else if(failed)failedImportsExpanded=true;else readyImportsExpanded=true;Populate();};
+  group.Collapsed+=(_,_)=>{if(partial)partialImportsExpanded=false;else if(failed)failedImportsExpanded=false;else readyImportsExpanded=false;};
+  group.IsExpanded=partial?partialImportsExpanded:failed?failedImportsExpanded:readyImportsExpanded;
   if(group.IsExpanded)Populate();
   return group;
  }

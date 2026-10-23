@@ -84,12 +84,24 @@ def sparse_rows(sheet, cancel=None):
     """
     from openpyxl.worksheet._reader import WorkSheetParser
     from openpyxl.cell.read_only import ReadOnlyCell
+    from types import SimpleNamespace
     from office_ocr import cancelled
+    class CachedParser(WorkSheetParser):
+        def parse_cell(self, element):
+            cell = super().parse_cell(element)
+            ns = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+            value = element.find(ns+'v')
+            cell['saved'] = value is not None and (value.text is not None or element.get('t') == 'str')
+            if cell['saved'] and cell['value'] is None and element.get('t') == 'str': cell['value'] = ''
+            return cell
     with sheet._get_source() as stream:
-        parser = WorkSheetParser(stream, sheet._shared_strings,
+        parser = (CachedParser if sheet.parent.data_only else WorkSheetParser)(stream, sheet._shared_strings,
             data_only=sheet.parent.data_only, epoch=sheet.parent.epoch,
             date_formats=sheet.parent._date_formats,
             timedelta_formats=sheet.parent._timedelta_formats)
         for index, row in parser.parse():
             cancelled(cancel)
-            yield index, {c['column']: ReadOnlyCell(sheet, **c) for c in row if c['value'] is not None}
+            if sheet.parent.data_only:
+                yield index, {c['column']: SimpleNamespace(**c) for c in row}
+            else:
+                yield index, {c['column']: ReadOnlyCell(sheet, **c) for c in row if c['value'] is not None}

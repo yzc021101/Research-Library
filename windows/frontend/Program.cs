@@ -5,6 +5,7 @@ namespace ResearchLibrary;
 internal static class Program {
  [STAThread]
  static void Main(string[] args){
+  if(args.Contains("--prepare-uninstall")){Environment.Exit(UninstallSupport.Prepare());return;}
   if(args.Contains("--verify-runtime-download")){try{Task.Run(RuntimeSetup.Download).GetAwaiter().GetResult();Environment.Exit(0);}catch{Environment.Exit(1);}return;}
   if(!RuntimeSetup.Ensure())return;
   RunApplication();

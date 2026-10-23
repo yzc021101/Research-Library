@@ -184,7 +184,7 @@ struct ModelOption: Identifiable, Decodable {
         busy = true
         do {
             let result = try await post("/imports/retry", path.map { ["path": $0] } ?? [:])
-            message = result["accepted"] as? Bool == true ? "已开始重试失败文件" : "请等待当前任务完成后重试"
+            message = result["accepted"] as? Bool == true ? "已开始重试未完整入库文件" : "请等待当前任务完成后重试"
         } catch { message = error.localizedDescription }
         await refresh()
     }
@@ -344,6 +344,7 @@ struct MainView: View {
     @ObservedObject var m: LibraryModel
     @State private var columns: NavigationSplitViewVisibility = .all
     @State private var failedRecordsExpanded = true
+    @State private var partialRecordsExpanded = true
     @State private var readyRecordsExpanded = false
     var title: String { ["overview":"概览", "sources":"资料来源", "search":"检索资料", "mcp":"MCP 接入"][m.selected] ?? "资料库" }
 
@@ -555,20 +556,22 @@ struct MainView: View {
                     Text("入库记录").font(.headline)
                     importGroup("导入失败", files: m.visibleFiles.filter { $0["state"] as? String == "failed" }, expanded: $failedRecordsExpanded, failed: true)
                     Divider()
+                    importGroup("部分入库", files: m.visibleFiles.filter { $0["state"] as? String == "partial" }, expanded: $partialRecordsExpanded, failed: true, partial: true)
+                    Divider()
                     importGroup("已入库", files: m.visibleFiles.filter { $0["state"] as? String == "ready" }, expanded: $readyRecordsExpanded, failed: false)
                 }
             }
         }
     }
 
-    func importGroup(_ title: String, files: [[String: Any]], expanded: Binding<Bool>, failed: Bool) -> some View {
+    func importGroup(_ title: String, files: [[String: Any]], expanded: Binding<Bool>, failed: Bool, partial: Bool = false) -> some View {
         DisclosureGroup(isExpanded: expanded) {
             if expanded.wrappedValue {
                 if files.isEmpty {
                     Text(failed ? "没有失败的导入记录" : "暂无已入库文档").font(.callout).foregroundStyle(.secondary).padding(.top, 8)
                 } else {
                     if failed {
-                        HStack { Spacer(); Button("重试所有失败文件") { Task { await m.retryImports() } }
+                        HStack { Spacer(); Button("重试所有未完整入库文件") { Task { await m.retryImports() } }
                             .disabled(m.busy || m.modelBusy).accessibilityIdentifier("RetryAllImports") }
                     }
                     LazyVStack(alignment: .leading, spacing: 12) {
@@ -576,7 +579,7 @@ struct MainView: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack(alignment: .top) {
                                     Image(systemName: failed ? "exclamationmark.circle.fill" : "doc.text")
-                                        .foregroundStyle(failed ? Color.red : Color.secondary)
+                                        .foregroundStyle(failed ? (partial ? Color.orange : Color.red) : Color.secondary)
                                     Text(URL(fileURLWithPath: file["path"] as? String ?? "").lastPathComponent)
                                         .lineLimit(2).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                                         .help(file["path"] as? String ?? "")
@@ -597,11 +600,11 @@ struct MainView: View {
         } label: {
             HStack {
                 Label(title, systemImage: failed ? "exclamationmark.circle.fill" : "checkmark.circle")
-                    .foregroundStyle(failed && !files.isEmpty ? Color.red : Color.primary)
+                    .foregroundStyle(failed && !files.isEmpty ? (partial ? Color.orange : Color.red) : Color.primary)
                 Spacer()
                 Text("\(files.count) 份").foregroundStyle(.secondary)
             }.font(.headline).padding(.vertical, 4)
-        }.accessibilityIdentifier(failed ? "FailedImports" : "ReadyImports")
+        }.accessibilityIdentifier(partial ? "PartialImports" : failed ? "FailedImports" : "ReadyImports")
     }
 
     var search: some View {
